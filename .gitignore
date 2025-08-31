@@ -1,0 +1,14 @@
+﻿# dependencies / build
+node_modules/
+dist/
+build/
+.vite/
+
+# env / secrets
+.env
+.env.*
+
+# misc
+*.log
+.DS_Store
+coverage/
