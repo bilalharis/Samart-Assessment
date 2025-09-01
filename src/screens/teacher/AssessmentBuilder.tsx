@@ -40,6 +40,9 @@ const emptySA = (): SA => ({
   type: QuestionType.SHORT_ANSWER,
 });
 
+// Dropdown options for Title
+const CHAPTER_OPTIONS = Array.from({ length: 10 }, (_, i) => `Chapter ${i + 1}`);
+
 const AssessmentBuilder: React.FC<BuilderProps> = ({
   editingAssessment,
   defaultSubject = 'Science',
@@ -48,7 +51,7 @@ const AssessmentBuilder: React.FC<BuilderProps> = ({
   onSaved,
 }) => {
   // -------------------- form state --------------------
-  const [title, setTitle] = useState('');
+  const [title, setTitle] = useState(''); // now driven by dropdown
   const [subject, setSubject] = useState(defaultSubject);
   const [grade, setGrade] = useState(defaultGrade);
   const [questions, setQuestions] = useState<LocalQuestion[]>([emptyMCQ()]);
@@ -100,7 +103,11 @@ const AssessmentBuilder: React.FC<BuilderProps> = ({
           return `Question ${i + 1}: please fill all options.`;
         if (q.options.length < 2)
           return `Question ${i + 1}: add at least two options.`;
-        if (q.correctOptionIndex == null || q.correctOptionIndex < 0 || q.correctOptionIndex >= q.options.length)
+        if (
+          q.correctOptionIndex == null ||
+          q.correctOptionIndex < 0 ||
+          q.correctOptionIndex >= q.options.length
+        )
           return `Question ${i + 1}: select the correct option.`;
       }
     }
@@ -188,7 +195,7 @@ const AssessmentBuilder: React.FC<BuilderProps> = ({
 
     const payload: Assessment = {
       assessmentId: editingAssessment?.assessmentId || `assessment-${Date.now()}`,
-      title: title.trim(),
+      title: title.trim(), // selected chapter string
       subject: subject.trim(),
       grade: grade.trim(),
       // TeacherDashboard will normalize these on save
@@ -197,12 +204,17 @@ const AssessmentBuilder: React.FC<BuilderProps> = ({
       questions: normalizedQuestions,
     };
 
-    onSaved(payload); // <-- critical: give it to the parent (TeacherDashboard)
+    onSaved(payload);
     setSaving(false);
   };
 
   // -------------------- UI --------------------
   const isValidNow = useMemo(() => !validate(), [title, subject, grade, questions]);
+
+  // If editing shows a non-standard title, include it in the dropdown so it stays selectable
+  const titleOptions = CHAPTER_OPTIONS.includes(title) || title === ''
+    ? CHAPTER_OPTIONS
+    : [title, ...CHAPTER_OPTIONS];
 
   return (
     <div className="space-y-6">
@@ -212,39 +224,45 @@ const AssessmentBuilder: React.FC<BuilderProps> = ({
         </h3>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
-          <input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="w-full rounded-md px-3 py-2 border border-gray-300"
-            placeholder="e.g., Grade 5 - Science - Chapter 3"
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
-            <select
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-              className="w-full rounded-md px-3 py-2 border border-gray-300"
-            >
-              <option value="Science">Science</option>
-              <option value="Mathematics">Mathematics</option>
-            </select>
-          </div>
+      {/* First row: left-aligned, 70% width, equal columns */}
+      <div className="w-[70%]">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Grade (locked) */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Grade</label>
-            <select
+            <input
+              type="text"
               value={grade}
-              onChange={(e) => setGrade(e.target.value)}
-              className="w-full rounded-md px-3 py-2 border border-gray-300"
+              readOnly
+              className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-gray-700 cursor-not-allowed"
+            />
+          </div>
+
+          {/* Subject (locked) */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Subject</label>
+            <input
+              type="text"
+              value={subject}
+              readOnly
+              className="w-full rounded-md border border-gray-300 bg-gray-50 px-3 py-2 text-gray-700 cursor-not-allowed"
+            />
+          </div>
+
+          {/* Title (dropdown chapters) */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Title</label>
+            <select
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full rounded-md px-3 py-2 border border-gray-300 focus:ring-royal-blue focus:border-royal-blue text-gray-800"
             >
-              {['3', '4', '5', '6', '7', '8'].map((g) => (
-                <option key={g} value={g}>
-                  {g}
+              <option value="" disabled>
+                Click to select chapter
+              </option>
+              {titleOptions.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt}
                 </option>
               ))}
             </select>

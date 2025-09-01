@@ -513,6 +513,13 @@ const TaskSubmissions = ({
   );
 };
 
+/* ---------------------- Helper: show "Chapter N" labels ------------------- */
+const displayChapterOnly = (title?: string) => {
+  if (!title) return 'Assessment';
+  const m = title.match(/chapter\s*\d+/i);
+  return m ? m[0].replace(/\s+/g, ' ').replace(/chapter/i, 'Chapter') : title;
+};
+
 /* ------------------------------ Main dashboard ---------------------------- */
 const TeacherDashboard: React.FC = () => {
   const authContext = useContext(AuthContext);
@@ -533,9 +540,12 @@ const TeacherDashboard: React.FC = () => {
     return dataContext.assessments.filter((a) => a.teacherId === teacher.userId) || [];
   }, [dataContext?.assessments, teacher.userId]);
 
+  // Prefer "Chapter 1" on first load; otherwise fall back to the first assessment
   useEffect(() => {
     if (teacherAssessments.length > 0 && !selectedAssessmentId) {
-      setSelectedAssessmentId(teacherAssessments[0].assessmentId);
+      const preferred =
+        teacherAssessments.find((a) => /\bchapter\s*1\b/i.test(a.title || '')) || teacherAssessments[0];
+      setSelectedAssessmentId(preferred.assessmentId);
     }
   }, [teacherAssessments, selectedAssessmentId]);
 
@@ -667,25 +677,38 @@ const TeacherDashboard: React.FC = () => {
           </div>
 
           {teacherAssessments.length > 0 && (
-            <div className="mt-4 sm:mt-0">
-              <label
-                htmlFor="assessment-select"
-                className="block text-sm font-medium text-gray-700 mb-1"
-              >
-                Select Assessment
-              </label>
-              <select
-                id="assessment-select"
-                value={selectedAssessmentId || ''}
-                onChange={(e) => setSelectedAssessmentId(e.target.value)}
-                className="block w-full pl-3 pr-10 py-2 text-base rounded-md focus:outline-none focus:ring-royal-blue focus:border-royal-blue border border-gray-300 sm:text-sm"
-              >
-                {teacherAssessments.map((ass) => (
-                  <option key={ass.assessmentId} value={ass.assessmentId}>
-                    {ass.title}
-                  </option>
-                ))}
-              </select>
+            <div className="mt-4 sm:mt-0 flex items-end gap-6">
+              {/* Left info blocks */}
+              <div className="text-sm">
+                <div className="font-semibold text-gray-700">Grade</div>
+                <div className="mt-1 text-gray-800">{(teacher as any).grade || '5'}</div>
+              </div>
+              <div className="text-sm">
+                <div className="font-semibold text-gray-700">Subject</div>
+                <div className="mt-1 text-gray-800">{teacher.subject || 'Science'}</div>
+              </div>
+
+              {/* Select Assessment */}
+              <div>
+                <label
+                  htmlFor="assessment-select"
+                  className="block text-sm font-medium text-gray-700 mb-1"
+                >
+                  Select Assessment
+                </label>
+                <select
+                  id="assessment-select"
+                  value={selectedAssessmentId || ''}
+                  onChange={(e) => setSelectedAssessmentId(e.target.value)}
+                  className="block w-full pl-3 pr-10 py-2 text-base rounded-md focus:outline-none focus:ring-royal-blue focus:border-royal-blue border border-gray-300 sm:text-sm"
+                >
+                  {teacherAssessments.map((ass) => (
+                    <option key={ass.assessmentId} value={ass.assessmentId}>
+                      {displayChapterOnly(ass.title)}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           )}
         </div>
