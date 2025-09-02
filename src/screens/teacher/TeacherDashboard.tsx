@@ -49,14 +49,10 @@ const NotificationsPanel = ({ teacherId }: { teacherId: string }) => {
 };
 
 /* ----------------------- Robust MCQ detection ----------------------------- */
-/** Treat as MCQ if type matches common variants OR it has options + correctOptionIndex */
 const isMCQ = (q: any): boolean => {
   if (!q) return false;
-
-  // 1) Structural hint
   if (Array.isArray(q.options) && typeof (q as any).correctOptionIndex === 'number') return true;
 
-  // 2) Type-string checks (case/spacing tolerant)
   const t = q.type;
   if (!t && t !== 0) return false;
   const toKey = (v: any) =>
@@ -64,10 +60,8 @@ const isMCQ = (q: any): boolean => {
       .replace(/[\s_-]+/g, '')
       .toLowerCase();
   const key = toKey(t);
-
   if (key === 'mcq' || key === 'multiplechoice' || key.includes('multiplechoice')) return true;
 
-  // 3) Enum at runtime (if available)
   try {
     const qt = QuestionType as any;
     if (qt?.MULTIPLE_CHOICE && t === qt.MULTIPLE_CHOICE) return true;
@@ -103,7 +97,6 @@ const GradingModal = ({
 }) => {
   const dataContext = useContext(DataContext);
 
-  // Per-question state:
   const [mcqMarks, setMcqMarks] = useState<Record<number, boolean>>({});
   const [shortScores, setShortScores] = useState<Record<number, number>>({});
 
@@ -117,14 +110,12 @@ const GradingModal = ({
 
   const questions = Array.isArray(assessment?.questions) ? assessment!.questions : [];
 
-  // Initialize states when submission/assessment changes
   useEffect(() => {
     if (!submission || questions.length === 0) {
       setMcqMarks({});
       setShortScores({});
       return;
     }
-
     const initialMcq: Record<number, boolean> = {};
     const initialShort: Record<number, number> = {};
 
@@ -133,8 +124,6 @@ const GradingModal = ({
         const ansIdxRaw = (submission.answers ?? [])[idx];
         const ansIdx = ansIdxRaw == null ? -1 : Number(ansIdxRaw);
         initialMcq[idx] = ansIdx === (q as any).correctOptionIndex;
-      } else {
-        // keep undefined → teacher must input a 0–100 score
       }
     });
 
@@ -146,7 +135,6 @@ const GradingModal = ({
 
   const student = mockUsers.find((u) => u.userId === submission.studentId);
 
-  // Compute final score as average of all per-question percentages
   const perQuestionPercents = questions.map((q, idx) =>
     isMCQ(q) ? (mcqMarks[idx] ? 100 : 0) : shortScores[idx]
   );
@@ -216,7 +204,9 @@ const GradingModal = ({
                     value={shortScores[idx] ?? ''}
                     onChange={(e) => {
                       const v =
-                        e.target.value === '' ? undefined : Math.max(0, Math.min(100, Number(e.target.value)));
+                        e.target.value === ''
+                          ? undefined
+                          : Math.max(0, Math.min(100, Number(e.target.value)));
                       setShortScores((p) => ({ ...p, [idx]: v as number }));
                     }}
                     className="w-24 rounded border border-gray-300 px-2 py-1 text-sm focus:ring-royal-blue focus:border-royal-blue"
@@ -252,7 +242,8 @@ const GradingModal = ({
   );
 };
 
-/* --------------------------- Student history modal ------------------------ */
+/* ------------------------- Performance History modal ---------------------- */
+/** Trend shows: Yellow = running average to date; Blue = current result */
 const StudentHistoryModal = ({
   student,
   isOpen,
@@ -266,46 +257,221 @@ const StudentHistoryModal = ({
   allResults: AssessmentResult[];
   assessments: Assessment[];
 }) => {
+  const [tab, setTab] = useState<'list' | 'trend'>('list');
+
+  useEffect(() => {
+    if (isOpen) setTab('list');
+  }, [isOpen]);
+
   if (!student || !isOpen) return null;
 
   const last30 = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const history = allResults
+
+  const historyAsc = allResults
     .filter((r) => r.studentId === student.userId && r.timestamp >= last30)
-    .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))
+    .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
     .map((r) => ({
       ...r,
       title: assessments.find((a) => a.assessmentId === r.assessmentId)?.title || 'Assessment',
+      score: r.score ?? 0,
+      dateLabel: r.timestamp
+        ? new Date(r.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+        : '',
     }));
 
-  const avg =
-    history.length === 0 ? 0 : Math.round(history.reduce((s, r) => s + (r.score || 0), 0) / history.length);
+  const overallAvg =
+    historyAsc.length === 0
+      ? 0
+      : Math.round(historyAsc.reduce((s, r) => s + (r.score ?? 0), 0) / historyAsc.length);
+
+  const runningAverages: number[] = (() => {
+    const out: number[] = [];
+    let sum = 0;
+    historyAsc.forEach((h, i) => {
+      sum += h.score ?? 0;
+      out.push(Math.round(sum / (i + 1)));
+    });
+    return out;
+  })();
+
+  const Chart = () => {
+    if (historyAsc.length === 0) {
+      return <div className="text-gray-500">No results in the last 30 days.</div>;
+    }
+
+    const width = 780;
+    const height = 260;
+    const padding = { top: 24, right: 24, bottom: 42, left: 36 };
+    const chartW = width - padding.left - padding.right;
+    const chartH = height - padding.top - padding.bottom;
+
+    const count = historyAsc.length;
+    const gap = 24;
+    const barW = Math.max(28, Math.min(64, Math.floor((chartW - gap * (count - 1)) / count)));
+
+    const y = (v: number) =>
+      padding.top + chartH - (Math.max(0, Math.min(100, v)) / 100) * chartH;
+
+    let x = padding.left;
+
+    return (
+      <svg width={width} height={height} role="img" aria-label="Trend bars">
+        {[0, 25, 50, 75, 100].map((t) => (
+          <g key={t}>
+            <line
+              x1={padding.left}
+              x2={width - padding.right}
+              y1={y(t)}
+              y2={y(t)}
+              stroke="#e5e7eb"
+              strokeWidth={1}
+            />
+            <text
+              x={padding.left - 8}
+              y={y(t)}
+              textAnchor="end"
+              dominantBaseline="central"
+              fontSize="11"
+              fill="#6b7280"
+            >
+              {t}%
+            </text>
+          </g>
+        ))}
+
+        {historyAsc.map((h, i) => {
+          const avg = runningAverages[i];
+          const curr = h.score ?? 0;
+
+          const baseY = y(0);
+          const avgY = y(avg);
+          const currY = y(curr);
+          const avgH = baseY - avgY;
+          const currH = baseY - currY;
+
+          const barX = x;
+          x += barW + gap;
+
+          return (
+            <g key={i}>
+              {/* CURRENT result (blue) */}
+              <rect x={barX} y={currY} width={barW} height={currH} fill="#143F8C" rx={6} />
+
+              {/* RUNNING AVERAGE (yellow, translucent) */}
+              <rect
+                x={barX}
+                y={avgY}
+                width={barW}
+                height={avgH}
+                fill="#F59E0B"
+                fillOpacity="0.55"
+                stroke="#B45309"
+                strokeWidth="1"
+                rx={6}
+              />
+
+              <text
+                x={barX + barW / 2}
+                y={currY - 6}
+                textAnchor="middle"
+                fontSize="12"
+                fontWeight={700}
+                fill="#143F8C"
+              >
+                {curr}%
+              </text>
+              <text
+                x={barX + barW / 2}
+                y={avgY - 18}
+                textAnchor="middle"
+                fontSize="12"
+                fontWeight={700}
+                fill="#9A6A05"
+              >
+                Avg {avg}%
+              </text>
+
+              <text
+                x={barX + barW / 2}
+                y={height - 12}
+                textAnchor="middle"
+                fontSize="12"
+                fill="#374151"
+              >
+                {h.dateLabel}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    );
+  };
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={`Performance History: ${student.name}`}>
-      <div className="space-y-4">
-        <div className="text-sm text-gray-600">
-          Last 30 days — <span className="font-semibold">{history.length}</span> results, average{' '}
-          <span className="font-semibold">{avg}%</span>
-        </div>
-        {history.length === 0 && <div className="text-gray-500">No results in the last 30 days.</div>}
-        {history.map((r) => (
-          <div key={`${r.assessmentId}-${r.timestamp}`} className="p-3 border rounded-md">
-            <div className="flex justify-between text-sm font-semibold">
-              <span>{r.title}</span>
-              <span>{r.timestamp ? new Date(r.timestamp).toLocaleDateString() : ''}</span>
-            </div>
-            <div className="mt-2">
-              <div className="h-2 w-full bg-gray-200 rounded">
-                <div
-                  className="h-2 bg-royal-blue rounded"
-                  style={{ width: `${Math.max(0, Math.min(100, r.score || 0))}%` }}
-                />
-              </div>
-              <div className="text-right text-sm font-semibold mt-1">{r.score ?? 0}%</div>
-            </div>
-          </div>
-        ))}
+      <div className="text-sm text-gray-700 mb-3">
+        Last 30 days — <span className="font-semibold">{historyAsc.length}</span> results, average{' '}
+        <span className="font-semibold">{overallAvg}%</span>
       </div>
+
+      <div className="mb-3 flex gap-4">
+        <button
+          className={`text-sm pb-1 border-b-2 ${
+            tab === 'list' ? 'border-royal-blue text-royal-blue' : 'border-transparent text-gray-600'
+          }`}
+          onClick={() => setTab('list')}
+        >
+          List
+        </button>
+        <button
+          className={`text-sm pb-1 border-b-2 ${
+            tab === 'trend' ? 'border-royal-blue text-royal-blue' : 'border-transparent text-gray-600'
+          }`}
+          onClick={() => setTab('trend')}
+        >
+          Trend
+        </button>
+      </div>
+
+      {tab === 'list' && (
+        <div className="space-y-3">
+          {historyAsc.length === 0 && (
+            <div className="text-gray-500">No results in the last 30 days.</div>
+          )}
+          {historyAsc
+            .slice()
+            .reverse()
+            .map((r, idx) => (
+              <div key={idx} className="p-3 border rounded-md">
+                <div className="flex justify-between text-sm font-semibold">
+                  <span>{r.title}</span>
+                  <span>{r.timestamp ? new Date(r.timestamp).toLocaleDateString() : ''}</span>
+                </div>
+                <div className="mt-2">
+                  <div className="h-2 w-full bg-gray-200 rounded">
+                    <div
+                      className="h-2 bg-royal-blue rounded"
+                      style={{ width: `${Math.max(0, Math.min(100, r.score || 0))}%` }}
+                    />
+                  </div>
+                  <div className="text-right text-sm font-semibold mt-1">{r.score ?? 0}%</div>
+                </div>
+              </div>
+            ))}
+        </div>
+      )}
+
+      {tab === 'trend' && (
+        <div className="overflow-x-auto">
+          <div className="text-xs text-gray-600 mb-2">
+            <span className="inline-block w-3 h-3 mr-1 rounded-sm" style={{ background: '#F59E0B' }} />
+            <span className="mr-3">Average to date</span>
+            <span className="inline-block w-3 h-3 mr-1 rounded-sm" style={{ background: '#143F8C' }} />
+            <span>Current result</span>
+          </div>
+          <Chart />
+        </div>
+      )}
     </Modal>
   );
 };
@@ -321,7 +487,6 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number) 
   const large = end - start <= 180 ? 0 : 1;
   return `M ${s.x} ${s.y} A ${r} ${r} 0 ${large} 0 ${e.x} ${e.y} L ${cx} ${cy} Z`;
 }
-
 const ClassAveragesPie: React.FC<{
   mastered: number;
   developing: number;
@@ -373,7 +538,7 @@ const ClassAveragesPie: React.FC<{
   );
 };
 
-/* --------------- Helpers for band and tokens (table badges/pills) --------- */
+/* --------------- Helpers for band tokens (table badges/pills) ------------- */
 const bandForScore = (score?: number) => {
   const s = score ?? 0;
   if (s >= 85) return { label: 'Mastered', cls: 'bg-green-100 text-green-700' };
@@ -403,7 +568,6 @@ const TaskSubmissions = ({
     [teacher.classId]
   );
 
-  // Only the currently selected assessment
   const currentAssessment = useMemo(
     () =>
       assessments.find(
@@ -452,7 +616,6 @@ const TaskSubmissions = ({
         </button>
       </div>
 
-      {/* Table-like layout */}
       <div className="w-full overflow-x-auto">
         <table className="min-w-[700px] w-full border-collapse">
           <thead>
@@ -467,7 +630,6 @@ const TaskSubmissions = ({
             {rows.map(({ student, submission, status }) => {
               const score = submission?.score;
               const band = bandForScore(score);
-
               return (
                 <tr key={student.userId} className="border-b last:border-0">
                   <td className="py-3 pr-4 text-sm">
@@ -513,13 +675,6 @@ const TaskSubmissions = ({
   );
 };
 
-/* ---------------------- Helper: show "Chapter N" labels ------------------- */
-const displayChapterOnly = (title?: string) => {
-  if (!title) return 'Assessment';
-  const m = title.match(/chapter\s*\d+/i);
-  return m ? m[0].replace(/\s+/g, ' ').replace(/chapter/i, 'Chapter') : title;
-};
-
 /* ------------------------------ Main dashboard ---------------------------- */
 const TeacherDashboard: React.FC = () => {
   const authContext = useContext(AuthContext);
@@ -532,20 +687,19 @@ const TeacherDashboard: React.FC = () => {
   const [selectedAssessmentId, setSelectedAssessmentId] = useState<string | null>(null);
   const [gradingSubmission, setGradingSubmission] = useState<AssessmentSubmission | null>(null);
   const [editingAssessment, setEditingAssessment] = useState<Assessment | null>(null);
-
   const [historyStudent, setHistoryStudent] = useState<User | null>(null);
+
+  // Toggle for Average Class Performance section
+  const [showAvg, setShowAvg] = useState<boolean>(false);
 
   const teacherAssessments = useMemo(() => {
     if (!dataContext) return [];
     return dataContext.assessments.filter((a) => a.teacherId === teacher.userId) || [];
   }, [dataContext?.assessments, teacher.userId]);
 
-  // Prefer "Chapter 1" on first load; otherwise fall back to the first assessment
   useEffect(() => {
     if (teacherAssessments.length > 0 && !selectedAssessmentId) {
-      const preferred =
-        teacherAssessments.find((a) => /\bchapter\s*1\b/i.test(a.title || '')) || teacherAssessments[0];
-      setSelectedAssessmentId(preferred.assessmentId);
+      setSelectedAssessmentId(teacherAssessments[0].assessmentId);
     }
   }, [teacherAssessments, selectedAssessmentId]);
 
@@ -553,7 +707,6 @@ const TeacherDashboard: React.FC = () => {
     return <div className="p-8">Access Denied</div>;
   }
 
-  /* ----------------------------- Derived results ---------------------------- */
   const classStudents = mockUsers.filter(
     (u) => u.role === Role.STUDENT && u.classId === teacher.classId
   );
@@ -581,7 +734,6 @@ const TeacherDashboard: React.FC = () => {
     return arr.map((r) => `${r.assessmentId}:${r.studentId}:${r.score}:${r.timestamp}`).join('|');
   }, [dataContext.assessmentResults]);
 
-  /* ------- subject-aware summary for Average Class Performance ------------- */
   const subjectAssessIds = useMemo(() => {
     const subj = (teacher.subject || '').toLowerCase();
     return new Set(
@@ -620,13 +772,11 @@ const TeacherDashboard: React.FC = () => {
     return { masteredCount: mastered, developingCount: developing, supportCount: support };
   }, [allResultsForClass, subjectAssessIds, classStudents]);
 
-  /* ----------------------------- Grading handler ---------------------------- */
   const handleGrade = (submissionId: string, score: number) => {
     dataContext.gradeAssessment(submissionId, score);
     setGradingSubmission(null);
   };
 
-  /* --------------------------- Save / Edit assessment ---------------------- */
   const handleAssessmentSaved = (saved: Assessment) => {
     const normalized: Assessment = {
       ...saved,
@@ -645,7 +795,6 @@ const TeacherDashboard: React.FC = () => {
     setActiveTab('builder');
   };
 
-  /* --------------------------------- Tabs ---------------------------------- */
   const Tab = ({
     id,
     label,
@@ -666,7 +815,9 @@ const TeacherDashboard: React.FC = () => {
     </button>
   );
 
-  /* -------------------------------- Render --------------------------------- */
+  // Only show Class Avg / Grade / Subject / Select Assessment on these tabs:
+  const showHeaderFilters = ['matrix', 'planner', 'submissions'].includes(activeTab);
+
   return (
     <div className="container mx-auto p-4 sm:p-6 lg:p-8">
       <Card className="mb-6">
@@ -676,20 +827,28 @@ const TeacherDashboard: React.FC = () => {
             <p className="text-gray-600">Welcome, {teacher.name}</p>
           </div>
 
-          {teacherAssessments.length > 0 && (
-            <div className="mt-4 sm:mt-0 flex items-end gap-6">
-              {/* Left info blocks */}
-              <div className="text-sm">
-                <div className="font-semibold text-gray-700">Grade</div>
-                <div className="mt-1 text-gray-800">{(teacher as any).grade || '5'}</div>
+          {teacherAssessments.length > 0 && showHeaderFilters && (
+            <div className="mt-4 sm:mt-0 flex items-end gap-3">
+              {/* Class Avg toggle button */}
+              <button
+                onClick={() => setShowAvg((v) => !v)}
+                className={`flex items-center gap-2 border rounded px-3 py-1 text-sm self-end ${
+                  showAvg ? 'border-royal-blue text-royal-blue' : 'border-gray-300 text-gray-700'
+                }`}
+                title="Show/Hide average class performance"
+              >
+                <span className="inline-block w-2 h-2 rounded-full bg-royal-blue" />
+                Class Avg
+              </button>
+
+              <div className="px-3 py-1 rounded border text-sm text-gray-700 self-end">
+                <span className="font-semibold">Grade:</span> 5
               </div>
-              <div className="text-sm">
-                <div className="font-semibold text-gray-700">Subject</div>
-                <div className="mt-1 text-gray-800">{teacher.subject || 'Science'}</div>
+              <div className="px-3 py-1 rounded border text-sm text-gray-700 self-end">
+                <span className="font-semibold">Subject:</span> {teacher.subject || 'Science'}
               </div>
 
-              {/* Select Assessment */}
-              <div>
+              <div className="self-end">
                 <label
                   htmlFor="assessment-select"
                   className="block text-sm font-medium text-gray-700 mb-1"
@@ -704,7 +863,7 @@ const TeacherDashboard: React.FC = () => {
                 >
                   {teacherAssessments.map((ass) => (
                     <option key={ass.assessmentId} value={ass.assessmentId}>
-                      {displayChapterOnly(ass.title)}
+                      {ass.title}
                     </option>
                   ))}
                 </select>
@@ -720,7 +879,7 @@ const TeacherDashboard: React.FC = () => {
         <Tab id="matrix" label="Performance Matrix" icon={<BarChart2 size={18} />} />
         <Tab id="builder" label="Create Assessment" icon={<PlusCircle size={18} />} />
         <Tab id="grading" label="Assessment Grading" icon={<Edit size={18} />} />
-        <Tab id="planner" label="Lesson Planner" icon={<Target size={18} />} />
+        <Tab id="planner" label="Activity Planner" icon={<Target size={18} />} />
         <Tab id="submissions" label="Task Submissions" icon={<Mail size={18} />} />
       </div>
 
@@ -739,7 +898,14 @@ const TeacherDashboard: React.FC = () => {
               }}
             />
 
-            <ClassAveragesPie mastered={masteredCount} developing={developingCount} support={supportCount} />
+            {/* Average class performance — only when toggled ON */}
+            {showAvg && (
+              <ClassAveragesPie
+                mastered={masteredCount}
+                developing={developingCount}
+                support={supportCount}
+              />
+            )}
           </>
         )}
 
@@ -839,6 +1005,9 @@ const TeacherDashboard: React.FC = () => {
 };
 
 export default TeacherDashboard;
+
+
+
 
 
 
