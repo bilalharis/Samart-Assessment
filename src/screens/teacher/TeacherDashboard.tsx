@@ -17,7 +17,7 @@ import PerformanceMatrix from './PerformanceMatrix';
 import LessonPlanner from './LessonPlanner';
 import AssessmentBuilder from './AssessmentBuilder';
 
-import { Bell, BarChart2, Target, PlusCircle, Edit, Mail } from 'lucide-react';
+import { Bell, BarChart2, Target, PlusCircle, Edit, Mail, PieChart } from 'lucide-react';
 
 /* ------------------------------ Notifications ----------------------------- */
 const NotificationsPanel = ({ teacherId }: { teacherId: string }) => {
@@ -681,7 +681,7 @@ const TeacherDashboard: React.FC = () => {
   const dataContext = useContext(DataContext);
   const teacher = authContext?.user as User;
 
-  const [activeTab, setActiveTab] = useState<'matrix' | 'builder' | 'planner' | 'grading' | 'submissions'>(
+  const [activeTab, setActiveTab] = useState<'classavg' | 'matrix' | 'builder' | 'planner' | 'grading' | 'submissions'>(
     'matrix'
   );
   const [selectedAssessmentId, setSelectedAssessmentId] = useState<string | null>(null);
@@ -696,9 +696,6 @@ const TeacherDashboard: React.FC = () => {
   const [gradingSubmission, setGradingSubmission] = useState<AssessmentSubmission | null>(null);
   const [editingAssessment, setEditingAssessment] = useState<Assessment | null>(null);
   const [historyStudent, setHistoryStudent] = useState<User | null>(null);
-
-  // Toggle for Average Class Performance section
-  const [showAvg, setShowAvg] = useState<boolean>(false);
 
   const teacherAssessments = useMemo(() => {
     if (!dataContext) return [];
@@ -824,7 +821,7 @@ const TeacherDashboard: React.FC = () => {
     </button>
   );
 
-  // Only show Class Avg / Grade / Subject / Select Assessment on these tabs:
+  // Only show Grade / Subject / Select Assessment on these tabs:
   const showHeaderFilters = ['matrix', 'planner', 'submissions'].includes(activeTab);
 
   return (
@@ -872,26 +869,8 @@ const TeacherDashboard: React.FC = () => {
 
       <NotificationsPanel teacherId={teacher.userId} />
 
-      
-      {showHeaderFilters && (
-        <div className="mb-3 flex items-center">
-          <button
-            onClick={() => setShowAvg((s) => !s)}
-            className={`flex items-center px-3 py-2 text-sm rounded-lg border transition ${
-              showAvg ? 'bg-royal-blue text-white border-royal-blue' : 'bg-white text-gray-700 border-gray-300'
-            }`}
-          >
-            <span
-              className={`inline-block w-2 h-2 rounded-full mr-2 ${
-                showAvg ? 'bg-white' : 'bg-royal-blue'
-              }`}
-            />
-            Class Avg
-          </button>
-        </div>
-      )}
-
       <div className="flex border-b border-gray-300 flex-wrap">
+        <Tab id="classavg" label="Class Average" icon={<PieChart size={18} />} />
         <Tab id="matrix" label="Performance Matrix" icon={<BarChart2 size={18} />} />
         <Tab id="builder" label="Create Assessment" icon={<PlusCircle size={18} />} />
         <Tab id="grading" label="Assessment Grading" icon={<Edit size={18} />} />
@@ -900,6 +879,17 @@ const TeacherDashboard: React.FC = () => {
       </div>
 
       <div className="mt-6">
+        {activeTab === 'classavg' && (
+          <Card className="mt-0">
+            <h3 className="text-lg font-bold text-royal-blue mb-2">Average Class Performance</h3>
+            <ClassAveragesPie
+              mastered={masteredCount}
+              developing={developingCount}
+              support={supportCount}
+            />
+          </Card>
+        )}
+
         {activeTab === 'matrix' && selectedAssessmentId && (
           <>
             <PerformanceMatrix
@@ -913,15 +903,6 @@ const TeacherDashboard: React.FC = () => {
                 setHistoryStudent(stu);
               }}
             />
-
-            {/* Average class performance — only when toggled ON */}
-            {showAvg && (
-              <ClassAveragesPie
-                mastered={masteredCount}
-                developing={developingCount}
-                support={supportCount}
-              />
-            )}
           </>
         )}
 
@@ -1021,7 +1002,6 @@ const TeacherDashboard: React.FC = () => {
 };
 
 export default TeacherDashboard;
-
 
 
 
