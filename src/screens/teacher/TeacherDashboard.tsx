@@ -685,6 +685,14 @@ const TeacherDashboard: React.FC = () => {
     'matrix'
   );
   const [selectedAssessmentId, setSelectedAssessmentId] = useState<string | null>(null);
+
+  // Show only chapter name (e.g., "Chapter 3") or last segment if no chapter
+  function getChapterLabel(title: string): string {
+    const m = title.match(/Chapter\s*\d+/i);
+    if (m) return m[0].replace(/\s+/g, ' ').trim();
+    const parts = title.split(' - ');
+    return (parts[parts.length - 1] || title).trim();
+  }
   const [gradingSubmission, setGradingSubmission] = useState<AssessmentSubmission | null>(null);
   const [editingAssessment, setEditingAssessment] = useState<Assessment | null>(null);
   const [historyStudent, setHistoryStudent] = useState<User | null>(null);
@@ -699,7 +707,8 @@ const TeacherDashboard: React.FC = () => {
 
   useEffect(() => {
     if (teacherAssessments.length > 0 && !selectedAssessmentId) {
-      setSelectedAssessmentId(teacherAssessments[0].assessmentId);
+      const chapter1 = teacherAssessments.find(a => /Chapter\s*1/i.test(a.title));
+      setSelectedAssessmentId((chapter1 || teacherAssessments[0]).assessmentId);
     }
   }, [teacherAssessments, selectedAssessmentId]);
 
@@ -829,18 +838,6 @@ const TeacherDashboard: React.FC = () => {
 
           {teacherAssessments.length > 0 && showHeaderFilters && (
             <div className="mt-4 sm:mt-0 flex items-end gap-3">
-              {/* Class Avg toggle button */}
-              <button
-                onClick={() => setShowAvg((v) => !v)}
-                className={`flex items-center gap-2 border rounded px-3 py-1 text-sm self-end ${
-                  showAvg ? 'border-royal-blue text-royal-blue' : 'border-gray-300 text-gray-700'
-                }`}
-                title="Show/Hide average class performance"
-              >
-                <span className="inline-block w-2 h-2 rounded-full bg-royal-blue" />
-                Class Avg
-              </button>
-
               <div className="px-3 py-1 rounded border text-sm text-gray-700 self-end">
                 <span className="font-semibold">Grade:</span> 5
               </div>
@@ -863,7 +860,7 @@ const TeacherDashboard: React.FC = () => {
                 >
                   {teacherAssessments.map((ass) => (
                     <option key={ass.assessmentId} value={ass.assessmentId}>
-                      {ass.title}
+                      {getChapterLabel(ass.title)}
                     </option>
                   ))}
                 </select>
@@ -874,6 +871,25 @@ const TeacherDashboard: React.FC = () => {
       </Card>
 
       <NotificationsPanel teacherId={teacher.userId} />
+
+      
+      {showHeaderFilters && (
+        <div className="mb-3 flex items-center">
+          <button
+            onClick={() => setShowAvg((s) => !s)}
+            className={`flex items-center px-3 py-2 text-sm rounded-lg border transition ${
+              showAvg ? 'bg-royal-blue text-white border-royal-blue' : 'bg-white text-gray-700 border-gray-300'
+            }`}
+          >
+            <span
+              className={`inline-block w-2 h-2 rounded-full mr-2 ${
+                showAvg ? 'bg-white' : 'bg-royal-blue'
+              }`}
+            />
+            Class Avg
+          </button>
+        </div>
+      )}
 
       <div className="flex border-b border-gray-300 flex-wrap">
         <Tab id="matrix" label="Performance Matrix" icon={<BarChart2 size={18} />} />
@@ -951,7 +967,7 @@ const TeacherDashboard: React.FC = () => {
                     <div key={s.submissionId} className="p-3 border rounded-lg flex items-center justify-between">
                       <div className="text-sm">
                         <span className="font-semibold">{stu.name}</span> submitted{' '}
-                        <span className="font-semibold">{ass.title}</span>
+                        <span className="font-semibold">{getChapterLabel(ass.title)}</span>
                       </div>
                       <button
                         onClick={() => setGradingSubmission(s)}

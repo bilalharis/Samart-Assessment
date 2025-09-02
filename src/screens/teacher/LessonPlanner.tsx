@@ -118,7 +118,7 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ students, results, existi
 
   return (
     <Card>
-      <h3 className="text-xl font-bold text-royal-blue mb-4">Differentiated Lesson Planner</h3>
+      <h3 className="text-xl font-bold text-royal-blue mb-4">Activity Planner</h3>
 
       <div className="space-y-6">
         <GroupPlanner
