@@ -49,11 +49,15 @@ interface DataContextType {
   // ⬇️ now supports teacher remarks
   gradeAssessment: (submissionId: string, score: number, feedback?: string) => void;
 
+  // Lesson/Activity
   addLessonSubmission: (
-    submission: Omit<LessonSubmission, 'submissionId' | 'timestamp'>,
+    submission: Omit<LessonSubmission, 'submissionId' | 'timestamp' | 'status'>,
     studentName: string,
     assessmentTitle: string
   ) => void;
+  /** Notify teacher that a student has started/attempted the activity (no grading). */
+  notifyActivityAttempt: (assessmentId: string, studentId: string) => void;
+
   addLessonPlan: (plan: LessonPlan) => void;
   gradeSubmission: (submissionId: string, grade: 'approved' | 'needs_revision', feedback: string) => void;
 
@@ -278,12 +282,18 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     );
   };
 
+  /** Student submits an Activity (Lesson) — notify teacher & parent (no grading). */
   const addLessonSubmission = (
-    submissionData: Omit<LessonSubmission, 'submissionId' | 'timestamp'>,
+    submissionData: Omit<LessonSubmission, 'submissionId' | 'timestamp' | 'status'>,
     studentName: string,
     assessmentTitle: string
   ) => {
-    const submission = { ...submissionData, submissionId: `sub-${Date.now()}`, timestamp: Date.now() };
+    const submission: LessonSubmission = {
+      ...submissionData,
+      submissionId: `sub-${Date.now()}`,
+      status: 'submitted',
+      timestamp: Date.now(),
+    };
     setLessonSubmissions(prev => [...prev, submission]);
 
     const student = mockUsers.find(s => s.userId === submission.studentId);
@@ -296,14 +306,30 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     if (teacher) {
       addNotification({
         userId: teacher.userId,
-        message: `${studentName} submitted a task for ${assessmentTitle}.`,
+        message: `${studentName} submitted an activity for ${assessmentTitle}.`,
         isRead: false,
       });
     }
     if (parent) {
       addNotification({
         userId: parent.userId,
-        message: `Your child, ${studentName}, submitted a task for ${assessmentTitle}.`,
+        message: `Your child, ${studentName}, submitted an activity for ${assessmentTitle}.`,
+        isRead: false,
+      });
+    }
+  };
+
+  /** Notify teacher when a student starts/attempts an Activity (no submission yet). */
+  const notifyActivityAttempt = (assessmentId: string, studentId: string) => {
+    const assessment = assessments.find(a => a.assessmentId === assessmentId);
+    const student = mockUsers.find(u => u.userId === studentId);
+    if (!assessment || !student) return;
+
+    const teacher = mockUsers.find(u => u.role === Role.TEACHER && u.userId === assessment.teacherId);
+    if (teacher) {
+      addNotification({
+        userId: teacher.userId,
+        message: `${student.name} started the activity for ${assessment.title}.`,
         isRead: false,
       });
     }
@@ -420,6 +446,7 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
         gradeAssessment, // now accepts remarks
 
         addLessonSubmission,
+        notifyActivityAttempt,
         addLessonPlan,
         gradeSubmission,
 

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useContext, useRef, useLayoutEffect } from 'react';
+import React, { useState, useMemo, useContext, useRef, useLayoutEffect, useEffect } from 'react';
 import { AssessmentResult, User, PerformanceTier, LessonPlan } from '../../types';
 import { TIER_THRESHOLDS, TIER_BORDERS } from '../../constants';
 import Card from '../../components/ui/Card';
@@ -82,7 +82,7 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ students, results, existi
   const [masteryTasks, setMasteryTasks] = useState(existingPlan?.masteryTasks.tasks || '');
   const [developingTasks, setDevelopingTasks] = useState(existingPlan?.developingTasks.tasks || '');
   const [needsSupportTasks, setNeedsSupportTasks] = useState(existingPlan?.needsSupportTasks.tasks || '');
-  const [isSaved, setIsSaved] = useState(false);
+  const [isSent, setIsSent] = useState(false);
 
   const studentGroups = useMemo(() => {
     const groups: { [key in PerformanceTier]: User[] } = {
@@ -97,8 +97,22 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ students, results, existi
     return groups;
   }, [students, results]);
 
-  const handleSavePlan = () => {
-    if (!dataContext?.addLessonPlan) return;
+  // Enable only if any field has text
+  const canSend = useMemo(
+    () =>
+      (masteryTasks || '').trim().length > 0 ||
+      (developingTasks || '').trim().length > 0 ||
+      (needsSupportTasks || '').trim().length > 0,
+    [masteryTasks, developingTasks, needsSupportTasks]
+  );
+
+  // If teacher edits after sending, flip label back to "Send Activity"
+  useEffect(() => {
+    setIsSent(false);
+  }, [masteryTasks, developingTasks, needsSupportTasks]);
+
+  const handleSendActivity = () => {
+    if (!dataContext?.addLessonPlan || !canSend) return;
 
     const newPlan: LessonPlan = {
       planId: existingPlan?.planId || `plan-${assessmentId}`,
@@ -107,13 +121,11 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ students, results, existi
       masteryTasks: { students: studentGroups[PerformanceTier.MASTERED].map(s => s.userId), tasks: masteryTasks },
       developingTasks: { students: studentGroups[PerformanceTier.DEVELOPING].map(s => s.userId), tasks: developingTasks },
       needsSupportTasks: { students: studentGroups[PerformanceTier.NEEDS_SUPPORT].map(s => s.userId), tasks: needsSupportTasks },
-      // keep type happy; field is not shown in UI
       iepConsidered: existingPlan?.iepConsidered ?? true,
     };
 
     dataContext.addLessonPlan(newPlan);
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 3000);
+    setIsSent(true);
   };
 
   return (
@@ -145,16 +157,18 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ students, results, existi
 
         <div className="flex justify-end">
           <button
-            onClick={handleSavePlan}
-            className="flex items-center justify-center rounded-md bg-royal-blue px-6 py-3 text-base font-medium text-white shadow-sm hover:bg-opacity-90 focus:outline-none focus:ring-2 focus:ring-gold-accent focus:ring-offset-2"
+            onClick={handleSendActivity}
+            disabled={!canSend}
+            className={`flex items-center justify-center rounded-md px-6 py-3 text-base font-medium text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-gold-accent focus:ring-offset-2
+              ${!canSend ? 'bg-royal-blue/60 cursor-not-allowed' : 'bg-royal-blue hover:bg-opacity-90'}`}
           >
-            {isSaved ? (
+            {isSent ? (
               <>
                 <CheckCircle className="mr-2 h-5 w-5" />
-                Plan Saved!
+                Activity Sent
               </>
             ) : (
-              'Save Lesson Plan'
+              'Send Activity'
             )}
           </button>
         </div>

@@ -13,7 +13,7 @@ const ROLE_META: Record<RoleKey, { label: string; Icon: React.ComponentType<any>
   [Role.PRINCIPAL]: { label: 'Principal', Icon: Shield,        gradient: 'from-royal-blue to-royal-blue' },
   [Role.TEACHER]:   { label: 'Teacher',   Icon: BookOpen,      gradient: 'from-brand-yellow to-brand-yellow' },
   [Role.PARENT]:    { label: 'Parent',    Icon: Users,         gradient: 'from-brand-green to-brand-green' },
-  [Role.STUDENT]:   { label: 'Student',   Icon: GraduationCap, gradient: 'from-pink-accent to-pink-accent' },
+  [Role.STUDENT]:   { label: 'Student',   Icon: GraduationCap, gradient: 'from-rose-600 to-rose-500' },
 };
 
 /** Desired visual order on the landing page */
@@ -27,6 +27,10 @@ export default function Landing() {
     auth?.login(user);
     setOpenRole(null);
   }
+
+  // Format name for teachers: "Name - <Subject> Teacher"
+  const displayName = (u: User) =>
+    u.role === Role.TEACHER && u.subject ? `${u.name} - ${u.subject} Teacher` : u.name;
 
   return (
     <div
@@ -76,7 +80,7 @@ export default function Landing() {
                   className="w-full text-left p-3 rounded-md border hover:border-royal-blue hover:bg-blue-50 flex items-center justify-between"
                 >
                   <div>
-                    <div className="font-semibold text-gray-800">{u.name}</div>
+                    <div className="font-semibold text-gray-800">{displayName(u)}</div>
                     <div className="text-sm text-gray-500">{u.email}</div>
                   </div>
                   <span className="text-xs px-2 py-1 rounded bg-gray-100">

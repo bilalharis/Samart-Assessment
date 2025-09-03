@@ -239,7 +239,7 @@ const PerformanceMatrix: React.FC<Props> = ({ results, allResults, students }) =
   return (
     <>
       <Card>
-        <h3 className="text-xl font-bold text-royal-blue mb-4">Live Performance Matrix</h3>
+        <h3 className="text-xl font-bold text-royal-blue mb-4">Overall Performance</h3>
         {tiles.length === 0 ? (
           <p className="text-gray-500">No students found.</p>
         ) : (

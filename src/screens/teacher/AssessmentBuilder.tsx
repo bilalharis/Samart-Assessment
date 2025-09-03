@@ -212,9 +212,8 @@ const AssessmentBuilder: React.FC<BuilderProps> = ({
   const isValidNow = useMemo(() => !validate(), [title, subject, grade, questions]);
 
   // If editing shows a non-standard title, include it in the dropdown so it stays selectable
-  const titleOptions = CHAPTER_OPTIONS.includes(title) || title === ''
-    ? CHAPTER_OPTIONS
-    : [title, ...CHAPTER_OPTIONS];
+  const titleOptions =
+    CHAPTER_OPTIONS.includes(title) || title === '' ? CHAPTER_OPTIONS : [title, ...CHAPTER_OPTIONS];
 
   return (
     <div className="space-y-6">
@@ -345,18 +344,13 @@ const AssessmentBuilder: React.FC<BuilderProps> = ({
           </div>
         ))}
 
-        <div className="flex flex-wrap gap-3">
+        {/* Single add-button (default adds MCQ, type can be changed via dropdown) */}
+        <div className="mt-2">
           <button
             onClick={() => addQuestion(QuestionType.MULTIPLE_CHOICE)}
             className="rounded-md border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50"
           >
-            + Add multiple choice
-          </button>
-          <button
-            onClick={() => addQuestion(QuestionType.SHORT_ANSWER)}
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50"
-          >
-            + Add short answer
+            + Add question
           </button>
         </div>
       </div>

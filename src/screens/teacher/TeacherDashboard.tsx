@@ -1,4 +1,4 @@
-import React, { useState, useContext, useMemo, useEffect } from 'react';
+import React, { useState, useContext, useMemo, useEffect, useRef, useLayoutEffect } from 'react';
 import { AuthContext } from '../../context/AuthContext';
 import { DataContext } from '../../context/DataContext';
 import { mockUsers } from '../../data/mockData';
@@ -17,7 +17,7 @@ import PerformanceMatrix from './PerformanceMatrix';
 import LessonPlanner from './LessonPlanner';
 import AssessmentBuilder from './AssessmentBuilder';
 
-import { Bell, BarChart2, Target, PlusCircle, Edit, Mail, PieChart } from 'lucide-react';
+import { Bell, BarChart2, Target, PlusCircle, Edit, Mail } from 'lucide-react';
 
 /* ------------------------------ Notifications ----------------------------- */
 const NotificationsPanel = ({ teacherId }: { teacherId: string }) => {
@@ -243,7 +243,6 @@ const GradingModal = ({
 };
 
 /* ------------------------- Performance History modal ---------------------- */
-/** Trend shows: Yellow = running average to date; Blue = current result */
 const StudentHistoryModal = ({
   student,
   isOpen,
@@ -354,10 +353,7 @@ const StudentHistoryModal = ({
 
           return (
             <g key={i}>
-              {/* CURRENT result (blue) */}
               <rect x={barX} y={currY} width={barW} height={currH} fill="#143F8C" rx={6} />
-
-              {/* RUNNING AVERAGE (yellow, translucent) */}
               <rect
                 x={barX}
                 y={avgY}
@@ -369,7 +365,6 @@ const StudentHistoryModal = ({
                 strokeWidth="1"
                 rx={6}
               />
-
               <text
                 x={barX + barW / 2}
                 y={currY - 6}
@@ -390,7 +385,6 @@ const StudentHistoryModal = ({
               >
                 Avg {avg}%
               </text>
-
               <text
                 x={barX + barW / 2}
                 y={height - 12}
@@ -476,62 +470,123 @@ const StudentHistoryModal = ({
   );
 };
 
-/* ------------------------- Small pie (no libs required) ------------------- */
-function polarToCartesian(cx: number, cy: number, r: number, angle: number) {
-  const rad = ((angle - 90) * Math.PI) / 180;
-  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
-}
+/* ------------------------- Donut (Overall Performance) -------------------- */
 function arcPath(cx: number, cy: number, r: number, start: number, end: number) {
-  const s = polarToCartesian(cx, cy, r, end);
-  const e = polarToCartesian(cx, cy, r, start);
+  const toRad = (a: number) => ((a - 90) * Math.PI) / 180;
+  const sx = cx + r * Math.cos(toRad(end));
+  const sy = cy + r * Math.sin(toRad(end));
+  const ex = cx + r * Math.cos(toRad(start));
+  const ey = cy + r * Math.sin(toRad(start));
   const large = end - start <= 180 ? 0 : 1;
-  return `M ${s.x} ${s.y} A ${r} ${r} 0 ${large} 0 ${e.x} ${e.y} L ${cx} ${cy} Z`;
+  return `M ${sx} ${sy} A ${r} ${r} 0 ${large} 0 ${ex} ${ey}`;
 }
-const ClassAveragesPie: React.FC<{
+
+const OverallDistributionPie: React.FC<{
   mastered: number;
   developing: number;
   support: number;
 }> = ({ mastered, developing, support }) => {
-  const total = mastered + developing + support;
-  if (total === 0) {
-    return (
-      <Card className="mt-6">
-        <h3 className="text-lg font-bold text-royal-blue mb-2">Average Class Performance</h3>
-        <p className="text-gray-500">No results yet for this subject.</p>
-      </Card>
-    );
-  }
-
+  const total = Math.max(0, mastered + developing + support);
   const segs = [
     { label: 'Mastered', value: mastered, color: '#15803d' },
     { label: 'Developing', value: developing, color: '#f59e0b' },
     { label: 'Needs Support', value: support, color: '#dc2626' },
   ];
 
+  // Majority for center label; callout appears only on hover.
+  // const majority = segs.slice().sort((a, b) => b.value - a.value)[0];
+  const [hovered, setHovered] = useState<number | null>(null);
+
+  // Sizing
+  const W = 340;
+  const H = 220;
+  const cx = 110;
+  const cy = 110;
+  const outer = 80;
+  const inner = 50;
+
   let angle = 0;
-  const cx = 110,
-    cy = 110,
-    r = 100;
 
   return (
     <Card className="mt-6">
-      <h3 className="text-lg font-bold text-royal-blue mb-4">Average Class Performance</h3>
-      <div className="flex items-center gap-8 flex-wrap">
-        <svg width={220} height={220} viewBox="0 0 220 220">
+      {/* tighter gap between donut and legend */}
+      <div className="flex items-center gap-4 flex-wrap">
+        <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
+          {/* Base ring */}
+          <circle cx={cx} cy={cy} r={outer} fill="none" stroke="#e5e7eb" strokeWidth={outer - inner} />
+
+          {/* Segments */}
           {segs.map((s, i) => {
-            const sweep = (s.value / total) * 360;
-            const path = arcPath(cx, cy, r, angle, angle + sweep);
+            const sweep = total ? (s.value / total) * 360 : 0;
+            const start = angle;
+            const end = angle + sweep;
             angle += sweep;
-            return <path key={i} d={path} fill={s.color} stroke="#fff" strokeWidth={1} />;
+
+            const hoveredNow = hovered === i;
+
+            return (
+              <path
+                key={i}
+                d={arcPath(cx, cy, (outer + inner) / 2, start, end)}
+                stroke={s.color}
+                strokeWidth={outer - inner + (hoveredNow ? 4 : 0)}
+                strokeLinecap="butt"
+                fill="none"
+                opacity={hovered === null || hoveredNow ? 1 : 0.55}
+                onMouseEnter={() => setHovered(i)}
+                onMouseLeave={() => setHovered(null)}
+                style={{ cursor: 'pointer', transition: 'opacity 120ms, stroke-width 120ms' }}
+              />
+            );
           })}
+
+          {/* Center label */}
+          {/* <text
+            x={cx}
+            y={cy}
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontWeight={700}
+            fontSize="16"
+            fill="#14532d"
+          >
+            {majority.value > 0 ? majority.label : 'No Data'}
+          </text> */}
+
+          {/* Hover callout ONLY when hovering */}
+          {hovered !== null && total > 0 && (() => {
+            const s = segs[hovered];
+            const pct = ((s.value / total) * 100).toFixed(2);
+
+            return (
+              <g>
+                <circle cx={cx + 70} cy={30} r={3} fill={s.color} />
+                <line x1={cx + 70} y1={30} x2={cx + 35} y2={35} stroke={s.color} strokeWidth="2" />
+                <text x={cx + 78} y={28} fontSize="14" fill="#14532d">
+                  {s.value} Students
+                </text>
+                <text x={cx + 78} y={46} fontSize="14" fill="#6b7280">
+                  (Rate {pct}%)
+                </text>
+              </g>
+            );
+          })()}
         </svg>
+
         <div className="space-y-2">
-          {segs.map((s) => (
-            <div key={s.label} className="flex items-center text-sm text-gray-700">
+          {segs.map((s, i) => (
+            <div
+              key={s.label}
+              className="flex items-center text-sm text-gray-700"
+              onMouseEnter={() => setHovered(i)}
+              onMouseLeave={() => setHovered(null)}
+              style={{ cursor: 'default' }}
+            >
               <span className="inline-block w-3 h-3 rounded-sm mr-2" style={{ backgroundColor: s.color }} />
               {s.label} — <span className="ml-1 font-semibold">{s.value}</span>
             </div>
           ))}
+          <div className="text-xs text-gray-500 mt-1">Total students: {total}</div>
         </div>
       </div>
     </Card>
@@ -547,6 +602,9 @@ const bandForScore = (score?: number) => {
 };
 
 /* ------------------------------ Submissions (TABLE UI) -------------------- */
+/* ------------------------------ Submissions (TABLE UI) -------------------- */
+/* ------------------------------ Submissions (TABLE UI) -------------------- */
+/* ------------------------------ Submissions (TABLE UI) -------------------- */
 const TaskSubmissions = ({
   teacher,
   selectedAssessmentId,
@@ -561,13 +619,21 @@ const TaskSubmissions = ({
   const dataContext = useContext(DataContext);
   if (!dataContext) return null;
 
-  const { assessments, assessmentSubmissions } = dataContext;
+  const {
+    assessments,
+    assessmentResults,
+    assessmentSubmissions,
+    lessonPlans,
+    lessonSubmissions,
+  } = dataContext;
 
+  /* --- roster: students in this teacher's class --- */
   const roster = useMemo(
     () => mockUsers.filter((u) => u.role === Role.STUDENT && u.classId === teacher.classId),
     [teacher.classId]
   );
 
+  /* --- current assessment (subject + class + teacher) --- */
   const currentAssessment = useMemo(
     () =>
       assessments.find(
@@ -589,13 +655,94 @@ const TaskSubmissions = ({
     );
   }
 
+  /* -----------------------------------------------------------------------
+   * IMPORTANT FIX:
+   * Build a map of results for this assessment and prefer them in the table.
+   * --------------------------------------------------------------------- */
+  const resultByStudent = useMemo(() => {
+    const map = new Map<string, AssessmentResult>();
+    assessmentResults
+      .filter((r) => r.assessmentId === currentAssessment.assessmentId)
+      .forEach((r) => map.set(r.studentId, r));
+    return map;
+  }, [assessmentResults, currentAssessment]);
+
+  /* --- activity plan for this assessment (if any) --- */
+  const plan = useMemo(
+    () => lessonPlans.find((lp) => lp.assessmentId === currentAssessment.assessmentId),
+    [lessonPlans, currentAssessment]
+  );
+
+  const trimmed = (s: string | undefined) => (s || '').trim();
+
+  /* --- helper: compute band label from score --- */
+  const bandLabel = (score?: number) => {
+    if (score == null) return null;
+    if (score >= 85) return 'Mastered';
+    if (score >= 60) return 'Developing';
+    return 'Needs Support';
+  };
+
+  /* --- derive which students are assigned / completed an activity --- */
+  const { assignedSet, completedSet } = useMemo(() => {
+    const assigned = new Set<string>();
+    const completed = new Set<string>();
+
+    // Membership by result (this assessment only)
+    roster.forEach((stu) => {
+      const res = resultByStudent.get(stu.userId);
+      const score = res?.score ?? null;
+      const label = bandLabel(score);
+
+      if (!plan) return;
+
+      // Decide which bucket they belong to based on their result
+      if (label === 'Mastered' && trimmed(plan.masteryTasks?.tasks)) {
+        assigned.add(stu.userId);
+      } else if (label === 'Developing' && trimmed(plan.developingTasks?.tasks)) {
+        assigned.add(stu.userId);
+      } else if (label === 'Needs Support' && trimmed(plan.needsSupportTasks?.tasks)) {
+        assigned.add(stu.userId);
+      }
+    });
+
+    // Mark completed by presence of a lessonSubmission on this assessment
+    lessonSubmissions
+      .filter((s) => s.assessmentId === currentAssessment.assessmentId)
+      .forEach((s) => {
+        if (s.status === 'submitted' || s.status === 'graded') {
+          completed.add(s.studentId);
+        }
+      });
+
+    return { assignedSet: assigned, completedSet: completed };
+  }, [roster, resultByStudent, plan, lessonSubmissions, currentAssessment]);
+
+  /* --- helper to render little pills --- */
+  const pill = (text: string, cls: string) => (
+    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${cls}`}>{text}</span>
+  );
+
+  /* --- build rows (prefer result; fall back to submission) --- */
   const rows = roster.map((stu) => {
+    const res = resultByStudent.get(stu.userId) || null;
     const sub = assessmentSubmissions.find(
       (s) => s.assessmentId === currentAssessment.assessmentId && s.studentId === stu.userId
     );
+
     const status: 'pending' | 'grade-now' | 'graded' =
-      !sub ? 'pending' : sub.status === 'pending' ? 'grade-now' : 'graded';
-    return { student: stu, submission: sub || null, status };
+      res
+        ? 'graded'
+        : !sub
+        ? 'pending'
+        : sub.status === 'pending'
+        ? 'grade-now'
+        : 'graded';
+
+    const score = res?.score ?? sub?.score ?? null;
+    const band = bandLabel(score);
+
+    return { student: stu, status, score, band, submission: sub || null };
   });
 
   return (
@@ -617,30 +764,32 @@ const TaskSubmissions = ({
       </div>
 
       <div className="w-full overflow-x-auto">
-        <table className="min-w-[700px] w-full border-collapse">
+        <table className="min-w-[760px] w-full border-collapse">
           <thead>
             <tr className="text-left text-sm text-gray-600 border-b">
               <th className="py-2 pr-4">Student</th>
               <th className="py-2 pr-4">Status</th>
               <th className="py-2 pr-4">Score</th>
-              <th className="py-2">Band</th>
+              <th className="py-2 pr-4">Category</th>
+              <th className="py-2">Activity</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ student, submission, status }) => {
-              const score = submission?.score;
-              const band = bandForScore(score);
+            {rows.map(({ student, status, score, band, submission }) => {
+              const activityCell = completedSet.has(student.userId)
+                ? pill('Completed', 'bg-blue-100 text-blue-700')
+                : assignedSet.has(student.userId)
+                ? pill('Assigned', 'bg-blue-50 text-blue-700')
+                : '—';
+
               return (
                 <tr key={student.userId} className="border-b last:border-0">
                   <td className="py-3 pr-4 text-sm">
                     <span className="font-semibold">{student.name}</span>
                   </td>
+
                   <td className="py-3 pr-4">
-                    {status === 'pending' && (
-                      <span className="px-2 py-1 rounded-full text-xs font-semibold border bg-gray-100 text-gray-700">
-                        Pending
-                      </span>
-                    )}
+                    {status === 'pending' && pill('Pending', 'border bg-gray-100 text-gray-700')}
                     {status === 'grade-now' && submission && (
                       <button
                         onClick={() => onStartGrade(submission)}
@@ -649,22 +798,19 @@ const TaskSubmissions = ({
                         Grade now
                       </button>
                     )}
-                    {status === 'graded' && (
-                      <span className="px-2 py-1 rounded-full text-xs font-semibold border bg-green-100 text-green-700">
-                        Graded
-                      </span>
-                    )}
+                    {status === 'graded' && pill('Graded', 'border bg-green-100 text-green-700')}
                   </td>
+
                   <td className="py-3 pr-4 text-sm">{score != null ? `${score}%` : '—'}</td>
-                  <td className="py-3">
-                    {score != null ? (
-                      <span className={`px-2 py-1 rounded-full text-xs font-semibold ${band.cls}`}>
-                        {band.label}
-                      </span>
-                    ) : (
-                      '—'
-                    )}
+
+                  <td className="py-3 pr-4">
+                    {band === 'Mastered' && pill('Mastered', 'bg-green-100 text-green-700')}
+                    {band === 'Developing' && pill('Developing', 'bg-amber-100 text-amber-700')}
+                    {band === 'Needs Support' && pill('Needs Support', 'bg-red-100 text-red-700')}
+                    {band == null && '—'}
                   </td>
+
+                  <td className="py-3">{activityCell}</td>
                 </tr>
               );
             })}
@@ -675,18 +821,20 @@ const TaskSubmissions = ({
   );
 };
 
+
+
+
 /* ------------------------------ Main dashboard ---------------------------- */
 const TeacherDashboard: React.FC = () => {
   const authContext = useContext(AuthContext);
   const dataContext = useContext(DataContext);
   const teacher = authContext?.user as User;
 
-  const [activeTab, setActiveTab] = useState<'classavg' | 'matrix' | 'builder' | 'planner' | 'grading' | 'submissions'>(
+  const [activeTab, setActiveTab] = useState<'matrix' | 'builder' | 'planner' | 'grading' | 'submissions'>(
     'matrix'
   );
   const [selectedAssessmentId, setSelectedAssessmentId] = useState<string | null>(null);
 
-  // Show only chapter name (e.g., "Chapter 3") or last segment if no chapter
   function getChapterLabel(title: string): string {
     const m = title.match(/Chapter\s*\d+/i);
     if (m) return m[0].replace(/\s+/g, ' ').trim();
@@ -702,33 +850,85 @@ const TeacherDashboard: React.FC = () => {
     return dataContext.assessments.filter((a) => a.teacherId === teacher.userId) || [];
   }, [dataContext?.assessments, teacher.userId]);
 
-  useEffect(() => {
-    if (teacherAssessments.length > 0 && !selectedAssessmentId) {
-      const chapter1 = teacherAssessments.find(a => /Chapter\s*1/i.test(a.title));
-      setSelectedAssessmentId((chapter1 || teacherAssessments[0]).assessmentId);
-    }
-  }, [teacherAssessments, selectedAssessmentId]);
+const idTimestamp = (id: string) => {
+  const m = id?.match(/(\d{10,})/);
+  return m ? Number(m[1]) : 0; // built-ins (no timestamp) will sort earlier (0)
+};
+
+const latestTeacherAssessment = useMemo(() => {
+  if (!teacherAssessments.length) return null;
+  return teacherAssessments
+    .slice()
+    .sort((a, b) => idTimestamp(b.assessmentId) - idTimestamp(a.assessmentId))[0];
+}, [teacherAssessments]);
+
+useEffect(() => {
+  if (!latestTeacherAssessment) return;
+
+  // If nothing selected yet, or current selection no longer exists,
+  // default to the latest assessment by timestamp.
+  const selectionMissing =
+    !selectedAssessmentId ||
+    !teacherAssessments.some(a => a.assessmentId === selectedAssessmentId);
+
+  if (selectionMissing) {
+    setSelectedAssessmentId(latestTeacherAssessment.assessmentId);
+  }
+}, [latestTeacherAssessment, teacherAssessments, selectedAssessmentId]);
+
 
   if (!teacher || teacher.role !== Role.TEACHER || !dataContext) {
     return <div className="p-8">Access Denied</div>;
   }
+//   const idTimestamp = (id: string) => {
+//   const m = id?.match(/(\d{10,})/);
+//   return m ? Number(m[1]) : 0;
+// };
+
+// Latest assessment for this teacher (by id timestamp)
 
   const classStudents = mockUsers.filter(
     (u) => u.role === Role.STUDENT && u.classId === teacher.classId
   );
 
-  const allResultsForClass: AssessmentResult[] = useMemo(
-    () =>
-      dataContext.assessmentResults.filter((r) =>
-        classStudents.some((s) => s.userId === r.studentId)
-      ),
-    [dataContext.assessmentResults, classStudents]
+  const teacherAssessIdSet = useMemo(
+    () => new Set(teacherAssessments.filter(a => a.classId === teacher.classId).map(a => a.assessmentId)),
+    [teacherAssessments, teacher.classId]
   );
 
-  const currentAssessmentResults: AssessmentResult[] = useMemo(
-    () => allResultsForClass.filter((r) => r.assessmentId === selectedAssessmentId),
-    [allResultsForClass, selectedAssessmentId]
+  const teacherAllResults: AssessmentResult[] = useMemo(
+    () =>
+      dataContext.assessmentResults.filter(
+        (r) => teacherAssessIdSet.has(r.assessmentId) && classStudents.some((s) => s.userId === r.studentId)
+      ),
+    [dataContext.assessmentResults, teacherAssessIdSet, classStudents]
   );
+
+  const aggregateResultsForMatrix: AssessmentResult[] = useMemo(() => {
+    return classStudents.map((stu) => {
+      const mine = teacherAllResults.filter((r) => r.studentId === stu.userId);
+      const avg =
+        mine.length === 0 ? 0 : Math.round(mine.reduce((s, r) => s + (r.score ?? 0), 0) / mine.length);
+      return {
+        resultId: `overall-${stu.userId}`,
+        assessmentId: 'overall',
+        studentId: stu.userId,
+        score: avg,
+        timestamp: Date.now(),
+      };
+    });
+  }, [classStudents, teacherAllResults]);
+
+  const dist = useMemo(() => {
+    let mastered = 0, developing = 0, support = 0;
+    aggregateResultsForMatrix.forEach(r => {
+      const s = r.score ?? 0;
+      if (s >= 85) mastered += 1;
+      else if (s >= 60) developing += 1;
+      else support += 1;
+    });
+    return { mastered, developing, support };
+  }, [aggregateResultsForMatrix]);
 
   const currentPlan = useMemo(
     () => dataContext.lessonPlans.find((lp) => lp.assessmentId === selectedAssessmentId),
@@ -739,44 +939,6 @@ const TeacherDashboard: React.FC = () => {
     const arr = dataContext.assessmentResults || [];
     return arr.map((r) => `${r.assessmentId}:${r.studentId}:${r.score}:${r.timestamp}`).join('|');
   }, [dataContext.assessmentResults]);
-
-  const subjectAssessIds = useMemo(() => {
-    const subj = (teacher.subject || '').toLowerCase();
-    return new Set(
-      dataContext.assessments
-        .filter(
-          (a) =>
-            a.classId === teacher.classId &&
-            (a.subject || '').toLowerCase().includes(subj)
-        )
-        .map((a) => a.assessmentId)
-    );
-  }, [dataContext.assessments, teacher.classId, teacher.subject]);
-
-  const { masteredCount, developingCount, supportCount } = useMemo(() => {
-    const scoresByStudent = new Map<string, number[]>();
-    for (const r of allResultsForClass) {
-      if (!subjectAssessIds.has(r.assessmentId)) continue;
-      const arr = scoresByStudent.get(r.studentId) || [];
-      arr.push(r.score || 0);
-      scoresByStudent.set(r.studentId, arr);
-    }
-
-    let mastered = 0,
-      developing = 0,
-      support = 0;
-
-    classStudents.forEach((stu) => {
-      const arr = scoresByStudent.get(stu.userId) || [];
-      if (arr.length === 0) return;
-      const avg = arr.reduce((s, n) => s + n, 0) / arr.length;
-      if (avg >= 85) mastered += 1;
-      else if (avg >= 60) developing += 1;
-      else support += 1;
-    });
-
-    return { masteredCount: mastered, developingCount: developing, supportCount: support };
-  }, [allResultsForClass, subjectAssessIds, classStudents]);
 
   const handleGrade = (submissionId: string, score: number) => {
     dataContext.gradeAssessment(submissionId, score);
@@ -821,8 +983,8 @@ const TeacherDashboard: React.FC = () => {
     </button>
   );
 
-  // Only show Grade / Subject / Select Assessment on these tabs:
-  const showHeaderFilters = ['matrix', 'planner', 'submissions'].includes(activeTab);
+  // Only show Grade/Subject/Assessment selector on these tabs (not on Overall Performance)
+  const showHeaderFilters = ['planner', 'submissions'].includes(activeTab);
 
   return (
     <div className="container mx-auto p-4 sm:p-6 lg:p-8">
@@ -870,32 +1032,22 @@ const TeacherDashboard: React.FC = () => {
       <NotificationsPanel teacherId={teacher.userId} />
 
       <div className="flex border-b border-gray-300 flex-wrap">
-        <Tab id="classavg" label="Class Average" icon={<PieChart size={18} />} />
-        <Tab id="matrix" label="Performance Matrix" icon={<BarChart2 size={18} />} />
+        <Tab id="matrix" label="Overall Performance" icon={<BarChart2 size={18} />} />
         <Tab id="builder" label="Create Assessment" icon={<PlusCircle size={18} />} />
         <Tab id="grading" label="Assessment Grading" icon={<Edit size={18} />} />
+        <Tab id="submissions" label="Assessment Performance" icon={<Mail size={18} />} />
         <Tab id="planner" label="Activity Planner" icon={<Target size={18} />} />
-        <Tab id="submissions" label="Task Submissions" icon={<Mail size={18} />} />
+        
       </div>
 
       <div className="mt-6">
-        {activeTab === 'classavg' && (
-          <Card className="mt-0">
-            <h3 className="text-lg font-bold text-royal-blue mb-2">Average Class Performance</h3>
-            <ClassAveragesPie
-              mastered={masteredCount}
-              developing={developingCount}
-              support={supportCount}
-            />
-          </Card>
-        )}
-
-        {activeTab === 'matrix' && selectedAssessmentId && (
+        {activeTab === 'matrix' && (
           <>
+            {/* 1) Cards: each student's average across all teacher-created assessments */}
             <PerformanceMatrix
-              key={`${selectedAssessmentId}-${resultsVersion}`}
-              results={currentAssessmentResults}
-              allResults={allResultsForClass}
+              key={`overall-${resultsVersion}`}
+              results={aggregateResultsForMatrix}
+              allResults={teacherAllResults}
               students={classStudents}
               onViewHistory={(s: any) => {
                 const id = typeof s === 'string' ? s : (s?.userId as string);
@@ -903,13 +1055,20 @@ const TeacherDashboard: React.FC = () => {
                 setHistoryStudent(stu);
               }}
             />
+
+            {/* 2) Donut showing distribution (BELOW the cards) */}
+            <OverallDistributionPie
+              mastered={dist.mastered}
+              developing={dist.developing}
+              support={dist.support}
+            />
           </>
         )}
 
         {activeTab === 'planner' && selectedAssessmentId && (
           <LessonPlanner
             students={classStudents}
-            results={currentAssessmentResults}
+            results={teacherAllResults.filter(r => r.assessmentId === selectedAssessmentId)}
             existingPlan={currentPlan}
             assessmentId={selectedAssessmentId}
           />
@@ -981,7 +1140,6 @@ const TeacherDashboard: React.FC = () => {
         )}
       </div>
 
-      {/* Grader modal */}
       <GradingModal
         submission={gradingSubmission}
         isOpen={!!gradingSubmission}
@@ -989,12 +1147,11 @@ const TeacherDashboard: React.FC = () => {
         onGrade={handleGrade}
       />
 
-      {/* Student history modal */}
       <StudentHistoryModal
         student={historyStudent}
         isOpen={!!historyStudent}
         onClose={() => setHistoryStudent(null)}
-        allResults={allResultsForClass}
+        allResults={teacherAllResults}
         assessments={dataContext.assessments}
       />
     </div>
@@ -1002,6 +1159,9 @@ const TeacherDashboard: React.FC = () => {
 };
 
 export default TeacherDashboard;
+
+
+
 
 
 

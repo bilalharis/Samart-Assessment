@@ -6,6 +6,15 @@ import Card from '../../components/ui/Card';
 import Modal from '../../components/ui/Modal';
 import { TIER_THRESHOLDS, TIER_COLORS } from '../../constants';
 import { ClipboardCheck, Target, Award, CheckCircle, Clock, User as UserIcon, Send, Hourglass, Upload } from 'lucide-react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
 
 const getPerformanceTier = (score: number): PerformanceTier => {
   if (score >= TIER_THRESHOLDS[PerformanceTier.MASTERED]) return PerformanceTier.MASTERED;
@@ -13,7 +22,7 @@ const getPerformanceTier = (score: number): PerformanceTier => {
   return PerformanceTier.NEEDS_SUPPORT;
 };
 
-/* ------- Modals (unchanged) ------- */
+/* ------- Modals (unchanged except copy tweak) ------- */
 const TakeAssessmentModal = ({ isOpen, onClose, assessment, student, onSubmit }: { isOpen: boolean, onClose: () => void, assessment: Assessment | null, student: User, onSubmit: (answers: { [key: number]: any }) => void }) => {
   const [answers, setAnswers] = useState<{ [key: number]: any }>({});
   if (!isOpen || !assessment) return null;
@@ -123,7 +132,7 @@ const SubmitTaskModal = ({ isOpen, onClose, taskInfo, onSubmit }: { isOpen: bool
       </div>
       <div className="mt-6 flex justify-end">
         <button onClick={handleSubmit} className="flex items-center rounded-md bg-gold-accent text-royal-blue font-bold px-4 py-2 text-sm shadow-sm hover:bg-opacity-90">
-          <Send size={16} className="mr-2" /> Submit Task
+          <Send size={16} className="mr-2" /> Submit Activity
         </button>
       </div>
     </Modal>
@@ -155,7 +164,8 @@ const ViewSubmissionModal = ({ isOpen, onClose, submission, assessmentTitle }: {
               )}
             </div>
           ) : (
-            <p className="text-gray-600">Your task is submitted and is waiting for the teacher to review it.</p>
+            // Copy aligned with activity flow (no grading required)
+            <p className="text-gray-600">Your activity is submitted.</p>
           )}
         </div>
       </div>
@@ -173,6 +183,48 @@ const StudentDashboard: React.FC = () => {
   const [takingLesson, setTakingLesson] = useState<CustomLesson | null>(null);
   const [submittingTask, setSubmittingTask] = useState<{ assessmentId: string; assessmentTitle: string; taskDescription: string } | null>(null);
   const [viewingSubmissionDetails, setViewingSubmissionDetails] = useState<{ submission: LessonSubmission, title: string } | null>(null);
+
+  // --- Helpers for charts ---
+  const chapterLabel = (title = '') => {
+    const m = title.match(/Chapter\s*\d+/i);
+    if (m) return m[0].replace(/\s+/g, ' ').trim();
+    const parts = title.split(' - ');
+    return parts.length ? parts[parts.length - 1] : title || '—';
+  };
+
+  const studentResultsAll = useMemo(() => {
+    if (!student || !dataContext) return [];
+    return (dataContext.assessmentResults || [])
+      .filter(r => r.studentId === student.userId)
+      .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  }, [student, dataContext]);
+
+  const chartDataScience = useMemo(() => {
+    if (!dataContext) return [];
+    return studentResultsAll
+      .map(r => {
+        const a = dataContext.assessments.find(x => x.assessmentId === r.assessmentId);
+        return a ? { r, a } : null;
+      })
+      .filter((x): x is { r: typeof studentResultsAll[number]; a: typeof dataContext.assessments[number] } => !!x)
+      .filter(({ a }) => (a.subject || '').toLowerCase().includes('science'))
+      .map(({ r, a }) => ({ name: chapterLabel(a.title), score: r.score ?? 0 }));
+  }, [studentResultsAll, dataContext]);
+
+  const chartDataMath = useMemo(() => {
+    if (!dataContext) return [];
+    return studentResultsAll
+      .map(r => {
+        const a = dataContext.assessments.find(x => x.assessmentId === r.assessmentId);
+        return a ? { r, a } : null;
+      })
+      .filter((x): x is { r: typeof studentResultsAll[number]; a: typeof dataContext.assessments[number] } => !!x)
+      .filter(({ a }) => {
+        const s = (a.subject || '').toLowerCase();
+        return s.includes('math');
+      })
+      .map(({ r, a }) => ({ name: chapterLabel(a.title), score: r.score ?? 0 }));
+  }, [studentResultsAll, dataContext]);
 
   const studentData = useMemo(() => {
     if (!student || !dataContext) return null;
@@ -232,10 +284,20 @@ const StudentDashboard: React.FC = () => {
       .filter(Boolean)
       .sort((a:any,b:any) => b.timestamp - a.timestamp);
 
-    const pendingGradingAssessments = assessmentSubmissions
-      .filter(s => s.studentId === student.userId && s.status === 'pending')
-      .map(s => assessments.find(a => a.assessmentId === s.assessmentId))
-      .filter((a): a is Assessment => !!a);
+// results = all graded results for this student (already computed above)
+const gradedAssessmentIds = new Set(results.map(r => r.assessmentId));
+
+// Only keep submissions that are actually still waiting for grading,
+// i.e., there's no graded result for the same assessment.
+const pendingGradingAssessments = assessmentSubmissions
+  .filter(s =>
+    s.studentId === student.userId &&
+    s.status === 'pending' &&
+    !gradedAssessmentIds.has(s.assessmentId)
+  )
+  .map(s => assessments.find(a => a.assessmentId === s.assessmentId))
+  .filter((a): a is Assessment => !!a);
+
 
     return { results, pendingAssessments, pendingGrading: pendingGradingAssessments, pendingLessons, submittedLessons };
   }, [student, dataContext]);
@@ -293,7 +355,7 @@ const StudentDashboard: React.FC = () => {
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
         <div className="space-y-6">
           <Card>
             <h3 className="text-xl font-bold text-royal-blue mb-4">My To-Do List</h3>
@@ -345,10 +407,45 @@ const StudentDashboard: React.FC = () => {
               {pendingGrading.length === 0 && submittedLessons.length === 0 && <p className="text-gray-500">No work is waiting for a grade.</p>}
             </div>
           </Card>
+
+          {/* --- Progress Charts below Submitted Work --- */}
+          <Card>
+            <h3 className="text-xl font-bold text-royal-blue mb-4">Science Progress</h3>
+            {chartDataScience.length === 0 ? (
+              <p className="text-sm text-gray-500">No science assessments yet.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={chartDataScience} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" />
+                  <YAxis domain={[0, 100]} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="score" stroke="#D4AF37" strokeWidth={3} name="Score %" />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
+
+          <Card>
+            <h3 className="text-xl font-bold text-royal-blue mb-4">Math Progress</h3>
+            {chartDataMath.length === 0 ? (
+              <p className="text-sm text-gray-500">No math assessments yet.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={chartDataMath} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="name" />
+                  <YAxis domain={[0, 100]} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="score" stroke="#D4AF37" strokeWidth={3} name="Score %" />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </Card>
         </div>
 
         <Card>
-          <h3 className="text-xl font-bold text-royal-blue mb-4 flex items-center"><ClipboardCheck className="mr-2"/>My Results & Tasks</h3>
+          <h3 className="text-xl font-bold text-royal-blue mb-4 flex items-center"><ClipboardCheck className="mr-2"/>My Results & Activity</h3>
           <div className="space-y-4">
             {results.map(result => (
               <div key={result.resultId} className="p-4 rounded-lg border border-gray-200">
@@ -371,7 +468,7 @@ const StudentDashboard: React.FC = () => {
                         setSubmittingTask({ assessmentId: result.assessmentId, assessmentTitle: result.title, taskDescription: result.assignedTasks });
                       }
                     }}>
-                      <h4 className="font-semibold text-gray-700 flex items-center"><Target className="mr-2" size={16}/>Your Task:</h4>
+                      <h4 className="font-semibold text-gray-700 flex items-center"><Target className="mr-2" size={16}/>Your Activity:</h4>
                       <p className="text-sm text-gray-600 pl-6">{result.assignedTasks}</p>
                     </div>
                     <div className="mt-2 text-right">
@@ -383,13 +480,13 @@ const StudentDashboard: React.FC = () => {
                             </span>
                           ) : (
                             <span className="text-xs font-semibold flex items-center justify-end text-blue-600">
-                              <Clock size={14} className="mr-1"/> Submitted for review
+                              <Clock size={14} className="mr-1"/> Submitted
                             </span>
                           )}
-                          <div className="text-xs text-blue-600 font-semibold">(Click task to view submission)</div>
+                          <div className="text-xs text-blue-600 font-semibold">(Click your Activity to view submission)</div>
                         </>
                       ) : (
-                        <div className="text-xs text-blue-600 font-semibold">(Click task to open editor)</div>
+                        <div className="text-xs text-blue-600 font-semibold">(Click Your Activity to open editor)</div>
                       )}
                     </div>
                   </div>
