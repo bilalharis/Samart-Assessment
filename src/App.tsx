@@ -53,7 +53,7 @@ const App: React.FC = () => {
             <div className="flex h-16 items-center justify-between">
               <div className="flex items-center space-x-4">
                  <Building className="h-10 w-10 text-royal-blue" />
-                <h1 className="text-xl font-bold text-royal-blue">Smart Assessment Feedback Loop</h1>
+                <h1 className="text-xl font-bold text-royal-blue">Smart Assessment</h1>
               </div>
               <div className="flex items-center space-x-4">
                 <div className="flex items-center space-x-2">
