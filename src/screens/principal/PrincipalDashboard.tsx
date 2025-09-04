@@ -26,7 +26,7 @@ const PrincipalDashboard: React.FC = () => {
 
     const { assessments, assessmentResults: allResults } = dataContext;
 
-    // Average by subject (bars)
+    // --- Average by Subject (bars) ---
     const subjectAgg = assessments.reduce((acc, a) => {
       const rs = allResults.filter(r => r.assessmentId === a.assessmentId);
       if (!rs.length) return acc;
@@ -42,6 +42,7 @@ const PrincipalDashboard: React.FC = () => {
       average: v.total / v.count,
     }));
 
+    // --- Helpers ---
     const getTierCounts = (scores: number[]) => {
       const counts = { mastered: 0, developing: 0, support: 0 };
       for (const s of scores) {
@@ -57,12 +58,7 @@ const PrincipalDashboard: React.FC = () => {
       return m ? Number(m[1]) : 0;
     };
 
-    const subjectResults = (subjectKey: string) =>
-      allResults.filter(r => {
-        const a = assessments.find(x => x.assessmentId === r.assessmentId);
-        return (a?.subject || '').toLowerCase().includes(subjectKey.toLowerCase());
-      });
-
+    // Trend per chapter (unchanged)
     const trendFor = (subjectKey: string) => {
       const map = new Map<number, number[]>();
       for (const a of assessments) {
@@ -81,18 +77,61 @@ const PrincipalDashboard: React.FC = () => {
       return out.length ? out : [{ name: 'Chapter 1', score: 0 }];
     };
 
-    // Pies
-    const allScores = allResults.map(r => r.score ?? 0);
-    const scienceScores = subjectResults('science').map(r => r.score ?? 0);
-    const mathScores = subjectResults('math').map(r => r.score ?? 0);
+    // ---------- NEW: donut counts by UNIQUE student average ----------
+    const studentIdOf = (r: any) =>
+      String(r?.studentId ?? r?.userId ?? r?.studentID ?? r?.student?.id ?? '');
 
-    const pieAll = getTierCounts(allScores);
-    const pieScience = getTierCounts(scienceScores);
-    const pieMath = getTierCounts(mathScores);
+    // Average per student for a subject, then bucket
+    const subjectTierCountsByStudentAvg = (subjectKey: string) => {
+      const ids = new Set(
+        assessments
+          .filter(a => (a.subject || '').toLowerCase().includes(subjectKey.toLowerCase()))
+          .map(a => a.assessmentId)
+      );
+
+      const byStudent = new Map<string, number[]>();
+      for (const r of allResults) {
+        if (!ids.has(r.assessmentId)) continue;
+        const sid = studentIdOf(r);
+        if (!sid) continue;
+        const score = r.score ?? 0;
+        byStudent.set(sid, (byStudent.get(sid) || []).concat(score));
+      }
+
+      const avgs: number[] = [];
+      byStudent.forEach(arr => {
+        avgs.push(arr.reduce((s, n) => s + n, 0) / arr.length);
+      });
+
+      return getTierCounts(avgs);
+    };
+
+    // Overall: average per student across ALL assessments
+    const overallTierCountsByStudentAvg = () => {
+      const byStudent = new Map<string, number[]>();
+      for (const r of allResults) {
+        const sid = studentIdOf(r);
+        if (!sid) continue;
+        const score = r.score ?? 0;
+        byStudent.set(sid, (byStudent.get(sid) || []).concat(score));
+      }
+      const avgs: number[] = [];
+      byStudent.forEach(arr => {
+        avgs.push(arr.reduce((s, n) => s + n, 0) / arr.length);
+      });
+      return getTierCounts(avgs);
+    };
+    // ----------------------------------------------------------------
 
     const scienceTrend = trendFor('science');
     const mathTrend = trendFor('math');
 
+    // Use new counting for donuts
+    const pieOverall = overallTierCountsByStudentAvg();
+    const pieScience = subjectTierCountsByStudentAvg('science');
+    const pieMath = subjectTierCountsByStudentAvg('math');
+
+    // Teacher activity list
     const teacherActivity = teachers
       .map(t => ({
         name: t.name,
@@ -102,7 +141,7 @@ const PrincipalDashboard: React.FC = () => {
 
     return {
       subjectChartData,
-      pies: { overall: pieAll, science: pieScience, math: pieMath }, // important: "overall"
+      pies: { overall: pieOverall, science: pieScience, math: pieMath },
       trends: { science: scienceTrend, math: mathTrend },
       teacherActivity,
     };
