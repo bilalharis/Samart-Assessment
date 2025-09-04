@@ -4,7 +4,8 @@ import { TIER_THRESHOLDS, TIER_BORDERS } from '../../constants';
 import Card from '../../components/ui/Card';
 import { AuthContext } from '../../context/AuthContext';
 import { DataContext } from '../../context/DataContext';
-import { CheckCircle } from 'lucide-react';
+import { CheckCircle, Sparkles } from 'lucide-react';
+import { suggestActivitiesForGroups } from './AISuggestionEngine';
 
 interface LessonPlannerProps {
   students: User[];
@@ -19,13 +20,14 @@ const getPerformanceTier = (score: number): PerformanceTier => {
   return PerformanceTier.NEEDS_SUPPORT;
 };
 
-/* ---------- Separate, memoized child to keep focus ---------- */
+/* ---------- Group block ---------- */
 type GPProps = {
   title: string;
   tier: PerformanceTier;
   students: User[];
   tasks: string;
   setTasks: (v: string) => void;
+  onAISuggest: () => void;
 };
 
 const GroupPlanner = React.memo(function GroupPlanner({
@@ -34,6 +36,7 @@ const GroupPlanner = React.memo(function GroupPlanner({
   students,
   tasks,
   setTasks,
+  onAISuggest,
 }: GPProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -45,11 +48,34 @@ const GroupPlanner = React.memo(function GroupPlanner({
     el.style.height = el.scrollHeight + 'px';
   }, [tasks]);
 
+  const needsNudge = !(tasks || '').trim();
+
   return (
     <div className={`rounded-lg p-4 border-l-4 ${TIER_BORDERS[tier]}`}>
-      <h4 className="text-lg font-bold text-royal-blue">
-        {title} ({students.length})
-      </h4>
+      <div className="flex items-center justify-between">
+        <h4 className="text-lg font-bold text-royal-blue">
+          {title} ({students.length})
+        </h4>
+
+        {/* per-group AI button (small, AI feel) */}
+        <button
+          type="button"
+          onClick={onAISuggest}
+          className={[
+            'relative inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold',
+            'bg-royal-blue text-white',
+            'ring-1 ring-gold-accent/60 hover:ring-gold-accent',
+            'shadow-sm hover:shadow-md',
+            'transition-all duration-300 hover:-translate-y-0.5',
+            needsNudge ? 'animate-pulse' : ''
+          ].join(' ')}
+          aria-label={`AI suggest for ${title}`}
+          title="AI suggest"
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          <span>AI suggest</span>
+        </button>
+      </div>
 
       <div className="flex flex-wrap gap-2 my-2">
         {students.map(s => (
@@ -73,7 +99,7 @@ const GroupPlanner = React.memo(function GroupPlanner({
     </div>
   );
 });
-/* ------------------------------------------------------------ */
+/* --------------------------------- */
 
 const LessonPlanner: React.FC<LessonPlannerProps> = ({ students, results, existingPlan, assessmentId }) => {
   const authContext = useContext(AuthContext);
@@ -83,6 +109,14 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ students, results, existi
   const [developingTasks, setDevelopingTasks] = useState(existingPlan?.developingTasks.tasks || '');
   const [needsSupportTasks, setNeedsSupportTasks] = useState(existingPlan?.needsSupportTasks.tasks || '');
   const [isSent, setIsSent] = useState(false);
+
+  // find selected assessment info for subject/title
+  const assessment = useMemo(
+    () => dataContext?.assessments.find(a => a.assessmentId === assessmentId),
+    [dataContext, assessmentId]
+  );
+  const subject = assessment?.subject || 'General';
+  const assessmentTitle = assessment?.title || '';
 
   const studentGroups = useMemo(() => {
     const groups: { [key in PerformanceTier]: User[] } = {
@@ -97,6 +131,9 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ students, results, existi
     return groups;
   }, [students, results]);
 
+  // quick score lookup
+  const scoreFor = (userId: string) => (results.find(r => r.studentId === userId)?.score ?? 0);
+
   // Enable only if any field has text
   const canSend = useMemo(
     () =>
@@ -110,6 +147,40 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ students, results, existi
   useEffect(() => {
     setIsSent(false);
   }, [masteryTasks, developingTasks, needsSupportTasks]);
+
+  // Build full suggestion once and pick needed text
+  const buildAllSuggestions = () =>
+    suggestActivitiesForGroups({
+      subject,
+      assessmentTitle,
+      groups: {
+        mastered: {
+          studentNames: studentGroups[PerformanceTier.MASTERED].map(s => s.name),
+          scores:       studentGroups[PerformanceTier.MASTERED].map(s => scoreFor(s.userId)),
+        },
+        developing: {
+          studentNames: studentGroups[PerformanceTier.DEVELOPING].map(s => s.name),
+          scores:       studentGroups[PerformanceTier.DEVELOPING].map(s => scoreFor(s.userId)),
+        },
+        support: {
+          studentNames: studentGroups[PerformanceTier.NEEDS_SUPPORT].map(s => s.name),
+          scores:       studentGroups[PerformanceTier.NEEDS_SUPPORT].map(s => scoreFor(s.userId)),
+        },
+      },
+    });
+
+  const handleAISuggestMastered = () => {
+    const out = buildAllSuggestions();
+    setMasteryTasks(out.mastered);
+  };
+  const handleAISuggestDeveloping = () => {
+    const out = buildAllSuggestions();
+    setDevelopingTasks(out.developing);
+  };
+  const handleAISuggestSupport = () => {
+    const out = buildAllSuggestions();
+    setNeedsSupportTasks(out.support);
+  };
 
   const handleSendActivity = () => {
     if (!dataContext?.addLessonPlan || !canSend) return;
@@ -139,6 +210,7 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ students, results, existi
           students={studentGroups[PerformanceTier.MASTERED]}
           tasks={masteryTasks}
           setTasks={setMasteryTasks}
+          onAISuggest={handleAISuggestMastered}
         />
         <GroupPlanner
           title="Developing Group"
@@ -146,6 +218,7 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ students, results, existi
           students={studentGroups[PerformanceTier.DEVELOPING]}
           tasks={developingTasks}
           setTasks={setDevelopingTasks}
+          onAISuggest={handleAISuggestDeveloping}
         />
         <GroupPlanner
           title="Needs Support Group"
@@ -153,8 +226,10 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ students, results, existi
           students={studentGroups[PerformanceTier.NEEDS_SUPPORT]}
           tasks={needsSupportTasks}
           setTasks={setNeedsSupportTasks}
+          onAISuggest={handleAISuggestSupport}
         />
 
+        {/* Actions */}
         <div className="flex justify-end">
           <button
             onClick={handleSendActivity}
@@ -178,4 +253,6 @@ const LessonPlanner: React.FC<LessonPlannerProps> = ({ students, results, existi
 };
 
 export default LessonPlanner;
+
+
 
