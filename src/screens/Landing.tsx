@@ -6,15 +6,18 @@ import { Role, User } from '../types';
 import { Shield, BookOpen, Users, GraduationCap } from 'lucide-react';
 import bg from '../assets/image.png';
 
+
 type RoleKey = Role.PRINCIPAL | Role.TEACHER | Role.PARENT | Role.STUDENT;
 
 /** Icon + style metadata per role */
-const ROLE_META: Record<RoleKey, { label: string; Icon: React.ComponentType<any>; gradient: string }> = {
-  [Role.PRINCIPAL]: { label: 'Principal', Icon: Shield,        gradient: 'from-royal-blue to-royal-blue' },
-  [Role.TEACHER]:   { label: 'Teacher',   Icon: BookOpen,      gradient: 'from-brand-yellow to-brand-yellow' },
-  [Role.PARENT]:    { label: 'Parent',    Icon: Users,         gradient: 'from-brand-green to-brand-green' },
+const ROLE_META = {
+  [Role.PRINCIPAL]: { label: 'Principal', Icon: Shield,        gradient: 'from-[#0033A0] to-[#0033A0]' },
+  [Role.TEACHER]:   { label: 'Teacher',   Icon: BookOpen,      gradient: 'from-[#F9A826] to-[#F9A826]' },
+  [Role.PARENT]:    { label: 'Parent',    Icon: Users,         gradient: 'from-[#2E7D32] to-[#2E7D32]' },
   [Role.STUDENT]:   { label: 'Student',   Icon: GraduationCap, gradient: 'from-rose-600 to-rose-500' },
 };
+
+
 
 /** Desired visual order on the landing page */
 const ROLE_ORDER: RoleKey[] = [Role.PRINCIPAL, Role.TEACHER, Role.STUDENT, Role.PARENT];
@@ -48,11 +51,16 @@ export default function Landing() {
           return (
             <div key={role} className="group relative">
               <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100 flex flex-col items-center">
-                <div
-                  className={`w-14 h-14 rounded-full bg-gradient-to-br ${gradient} flex items-center justify-center text-white shadow`}
-                >
-                  <Icon className="w-7 h-7" />
-                </div>
+             <div
+  className={`w-14 h-14 rounded-full
+              bg-royal-blue              /* solid fallback */
+              bg-gradient-to-br ${gradient}  /* your dynamic gradient */
+              flex items-center justify-center
+              text-white shadow`}
+>
+  <Icon className="w-7 h-7" />
+</div>
+
                 <div className="mt-3 font-semibold text-gray-800">{label}</div>
 
                 {/* Hover login button */}
