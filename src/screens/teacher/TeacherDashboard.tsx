@@ -1,4 +1,4 @@
-import React, { useState, useContext, useMemo, useEffect, useRef, useLayoutEffect } from 'react';
+import React, { useState, useContext, useMemo, useEffect } from 'react';
 import { AuthContext } from '../../context/AuthContext';
 import { DataContext } from '../../context/DataContext';
 import { mockUsers } from '../../data/mockData';
@@ -9,6 +9,7 @@ import {
   AssessmentResult,
   AssessmentSubmission,
   QuestionType,
+  PerformanceTier,
 } from '../../types';
 
 import Card from '../../components/ui/Card';
@@ -18,6 +19,14 @@ import LessonPlanner from './LessonPlanner';
 import AssessmentBuilder from './AssessmentBuilder';
 
 import { Bell, BarChart2, Target, PlusCircle, Edit, Mail } from 'lucide-react';
+import { TIER_THRESHOLDS } from '../../constants';
+
+/* ---------- one place to map score -> tier (same as cards) ---------- */
+const toTier = (score: number): PerformanceTier => {
+  if (score >= TIER_THRESHOLDS[PerformanceTier.MASTERED]) return PerformanceTier.MASTERED;
+  if (score >= TIER_THRESHOLDS[PerformanceTier.DEVELOPING]) return PerformanceTier.DEVELOPING;
+  return PerformanceTier.NEEDS_SUPPORT;
+};
 
 /* ------------------------------ Notifications ----------------------------- */
 const NotificationsPanel = ({ teacherId }: { teacherId: string }) => {
@@ -84,6 +93,7 @@ const safeToString = (v: any) => {
 };
 
 /* --------------------------------- Grader --------------------------------- */
+/* --------------------------------- Grader --------------------------------- */
 const GradingModal = ({
   submission,
   isOpen,
@@ -108,14 +118,24 @@ const GradingModal = ({
     [submission, dataContext]
   );
 
-  const questions = Array.isArray(assessment?.questions) ? assessment!.questions : [];
+  // ✅ make questions STABLE; do not create [] every render
+  const questions = useMemo(
+    () => (Array.isArray(assessment?.questions) ? assessment!.questions : []),
+    [assessment?.questions] // or [assessment]
+  );
 
+  // ✅ reset state only when the modal closes
   useEffect(() => {
-    if (!submission || questions.length === 0) {
+    if (!isOpen) {
       setMcqMarks({});
       setShortScores({});
-      return;
     }
+  }, [isOpen]);
+
+  // ✅ compute marks only when the modal is open and we have data
+  useEffect(() => {
+    if (!isOpen || !submission || questions.length === 0) return;
+
     const initialMcq: Record<number, boolean> = {};
     const initialShort: Record<number, number> = {};
 
@@ -129,7 +149,7 @@ const GradingModal = ({
 
     setMcqMarks(initialMcq);
     setShortScores(initialShort);
-  }, [submission, questions]);
+  }, [isOpen, submission, questions]);
 
   if (!isOpen || !submission || !assessment || questions.length === 0) return null;
 
@@ -150,95 +170,14 @@ const GradingModal = ({
   })();
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={`Grading: ${assessment.title || 'Assessment'} for ${student?.name || ''}`}
-    >
-      <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
-        {questions.map((q, idx) => {
-          const ansArray = submission.answers ?? [];
-          const studentAnswer = isMCQ(q)
-            ? (q as any).options?.[Number(ansArray[idx])] ?? 'Not answered'
-            : ansArray[idx];
+ <Modal
+  isOpen={isOpen}
+  onClose={onClose}
+  title={`Grading: ${assessment.title || 'Assessment'} for ${student?.name || ''}`}
+>
+  {/* ...content... */}
+</Modal>
 
-          return (
-            <div key={idx} className="p-3 border rounded-lg bg-gray-50">
-              <p className="font-semibold">
-                {idx + 1}. {q?.questionText ?? 'Question'}
-              </p>
-
-              <div className="mt-2 p-2 bg-blue-50 rounded">
-                <p className="text-sm font-bold text-royal-blue">Student&apos;s Answer:</p>
-                <p className="text-sm text-gray-700">{safeToString(studentAnswer)}</p>
-              </div>
-
-              {isMCQ(q) ? (
-                <>
-                  <div className="mt-1 p-2 bg-green-50 rounded">
-                    <p className="text-sm font-bold text-green-700">Correct Answer:</p>
-                    <p className="text-sm text-gray-700">
-                      {(q as any).options?.[(q as any).correctOptionIndex] ?? '—'}
-                    </p>
-                  </div>
-                  <div className="mt-2 text-right">
-                    <label className="flex items-center justify-end space-x-2 cursor-pointer">
-                      <span className="font-semibold text-sm">Mark as Correct</span>
-                      <input
-                        type="checkbox"
-                        checked={!!mcqMarks[idx]}
-                        onChange={(e) => setMcqMarks((p) => ({ ...p, [idx]: e.target.checked }))}
-                        className="h-5 w-5 rounded text-royal-blue focus:ring-royal-blue"
-                      />
-                    </label>
-                  </div>
-                </>
-              ) : (
-                <div className="mt-3 flex items-center justify-end gap-2">
-                  <label className="text-sm font-semibold text-gray-700">Score (0–100):</label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={shortScores[idx] ?? ''}
-                    onChange={(e) => {
-                      const v =
-                        e.target.value === ''
-                          ? undefined
-                          : Math.max(0, Math.min(100, Number(e.target.value)));
-                      setShortScores((p) => ({ ...p, [idx]: v as number }));
-                    }}
-                    className="w-24 rounded border border-gray-300 px-2 py-1 text-sm focus:ring-royal-blue focus:border-royal-blue"
-                    placeholder="—"
-                  />
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-        <div className="font-bold text-lg text-royal-blue">Final Score: {computedScore}%</div>
-        <div className="flex items-center gap-3">
-          {missingShort && (
-            <span className="text-xs text-amber-600">
-              Enter scores for all short-answer questions to enable submission.
-            </span>
-          )}
-          <button
-            disabled={missingShort}
-            onClick={() => onGrade(submission.submissionId, computedScore)}
-            className={`rounded-md px-4 py-2 text-sm font-medium text-white ${
-              missingShort ? 'bg-gray-300 cursor-not-allowed' : 'bg-royal-blue hover:bg-opacity-90'
-            }`}
-          >
-            Submit Grade
-          </button>
-        </div>
-      </div>
-    </Modal>
   );
 };
 
@@ -493,8 +432,6 @@ const OverallDistributionPie: React.FC<{
     { label: 'Needs Support', value: support, color: '#dc2626' },
   ];
 
-  // Majority for center label; callout appears only on hover.
-  // const majority = segs.slice().sort((a, b) => b.value - a.value)[0];
   const [hovered, setHovered] = useState<number | null>(null);
 
   // Sizing
@@ -509,13 +446,10 @@ const OverallDistributionPie: React.FC<{
 
   return (
     <Card className="mt-6">
-      {/* tighter gap between donut and legend */}
       <div className="flex items-center gap-4 flex-wrap">
         <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
-          {/* Base ring */}
           <circle cx={cx} cy={cy} r={outer} fill="none" stroke="#e5e7eb" strokeWidth={outer - inner} />
 
-          {/* Segments */}
           {segs.map((s, i) => {
             const sweep = total ? (s.value / total) * 360 : 0;
             const start = angle;
@@ -540,20 +474,6 @@ const OverallDistributionPie: React.FC<{
             );
           })}
 
-          {/* Center label */}
-          {/* <text
-            x={cx}
-            y={cy}
-            textAnchor="middle"
-            dominantBaseline="central"
-            fontWeight={700}
-            fontSize="16"
-            fill="#14532d"
-          >
-            {majority.value > 0 ? majority.label : 'No Data'}
-          </text> */}
-
-          {/* Hover callout ONLY when hovering */}
           {hovered !== null && total > 0 && (() => {
             const s = segs[hovered];
             const pct = ((s.value / total) * 100).toFixed(2);
@@ -596,14 +516,12 @@ const OverallDistributionPie: React.FC<{
 /* --------------- Helpers for band tokens (table badges/pills) ------------- */
 const bandForScore = (score?: number) => {
   const s = score ?? 0;
-  if (s >= 85) return { label: 'Mastered', cls: 'bg-green-100 text-green-700' };
-  if (s >= 60) return { label: 'Developing', cls: 'bg-amber-100 text-amber-700' };
+  const tier = toTier(s);
+  if (tier === PerformanceTier.MASTERED) return { label: 'Mastered', cls: 'bg-green-100 text-green-700' };
+  if (tier === PerformanceTier.DEVELOPING) return { label: 'Developing', cls: 'bg-amber-100 text-amber-700' };
   return { label: 'Needs Support', cls: 'bg-red-100 text-red-700' };
 };
 
-/* ------------------------------ Submissions (TABLE UI) -------------------- */
-/* ------------------------------ Submissions (TABLE UI) -------------------- */
-/* ------------------------------ Submissions (TABLE UI) -------------------- */
 /* ------------------------------ Submissions (TABLE UI) -------------------- */
 const TaskSubmissions = ({
   teacher,
@@ -655,10 +573,7 @@ const TaskSubmissions = ({
     );
   }
 
-  /* -----------------------------------------------------------------------
-   * IMPORTANT FIX:
-   * Build a map of results for this assessment and prefer them in the table.
-   * --------------------------------------------------------------------- */
+  /* --- Build a map of results for this assessment --- */
   const resultByStudent = useMemo(() => {
     const map = new Map<string, AssessmentResult>();
     assessmentResults
@@ -675,11 +590,12 @@ const TaskSubmissions = ({
 
   const trimmed = (s: string | undefined) => (s || '').trim();
 
-  /* --- helper: compute band label from score --- */
+  /* --- helper: compute band label from score (using same tiers) --- */
   const bandLabel = (score?: number) => {
     if (score == null) return null;
-    if (score >= 85) return 'Mastered';
-    if (score >= 60) return 'Developing';
+    const tier = toTier(score);
+    if (tier === PerformanceTier.MASTERED) return 'Mastered';
+    if (tier === PerformanceTier.DEVELOPING) return 'Developing';
     return 'Needs Support';
   };
 
@@ -688,7 +604,6 @@ const TaskSubmissions = ({
     const assigned = new Set<string>();
     const completed = new Set<string>();
 
-    // Membership by result (this assessment only)
     roster.forEach((stu) => {
       const res = resultByStudent.get(stu.userId);
       const score = res?.score ?? null;
@@ -696,7 +611,6 @@ const TaskSubmissions = ({
 
       if (!plan) return;
 
-      // Decide which bucket they belong to based on their result
       if (label === 'Mastered' && trimmed(plan.masteryTasks?.tasks)) {
         assigned.add(stu.userId);
       } else if (label === 'Developing' && trimmed(plan.developingTasks?.tasks)) {
@@ -706,7 +620,6 @@ const TaskSubmissions = ({
       }
     });
 
-    // Mark completed by presence of a lessonSubmission on this assessment
     lessonSubmissions
       .filter((s) => s.assessmentId === currentAssessment.assessmentId)
       .forEach((s) => {
@@ -718,12 +631,10 @@ const TaskSubmissions = ({
     return { assignedSet: assigned, completedSet: completed };
   }, [roster, resultByStudent, plan, lessonSubmissions, currentAssessment]);
 
-  /* --- helper to render little pills --- */
   const pill = (text: string, cls: string) => (
     <span className={`px-2 py-1 rounded-full text-xs font-semibold ${cls}`}>{text}</span>
   );
 
-  /* --- build rows (prefer result; fall back to submission) --- */
   const rows = roster.map((stu) => {
     const res = resultByStudent.get(stu.userId) || null;
     const sub = assessmentSubmissions.find(
@@ -821,18 +732,14 @@ const TaskSubmissions = ({
   );
 };
 
-
-
-
 /* ------------------------------ Main dashboard ---------------------------- */
 const TeacherDashboard: React.FC = () => {
   const authContext = useContext(AuthContext);
   const dataContext = useContext(DataContext);
-  const teacher = authContext?.user as User;
+  const teacher = authContext?.user as User | undefined;
 
-  const [activeTab, setActiveTab] = useState<'matrix' | 'builder' | 'planner' | 'grading' | 'submissions'>(
-    'matrix'
-  );
+  const [activeTab, setActiveTab] =
+    useState<'matrix' | 'builder' | 'planner' | 'grading' | 'submissions'>('matrix');
   const [selectedAssessmentId, setSelectedAssessmentId] = useState<string | null>(null);
 
   function getChapterLabel(title: string): string {
@@ -846,53 +753,42 @@ const TeacherDashboard: React.FC = () => {
   const [historyStudent, setHistoryStudent] = useState<User | null>(null);
 
   const teacherAssessments = useMemo(() => {
-    if (!dataContext) return [];
+    if (!dataContext || !teacher?.userId) return [];
     return dataContext.assessments.filter((a) => a.teacherId === teacher.userId) || [];
-  }, [dataContext?.assessments, teacher.userId]);
+  }, [dataContext?.assessments, teacher?.userId]);
 
-const idTimestamp = (id: string) => {
-  const m = id?.match(/(\d{10,})/);
-  return m ? Number(m[1]) : 0; // built-ins (no timestamp) will sort earlier (0)
-};
+  const idTimestamp = (id: string) => {
+    const m = id?.match(/(\d{10,})/);
+    return m ? Number(m[1]) : 0; // built-ins (no timestamp) will sort earlier (0)
+  };
 
-const latestTeacherAssessment = useMemo(() => {
-  if (!teacherAssessments.length) return null;
-  return teacherAssessments
-    .slice()
-    .sort((a, b) => idTimestamp(b.assessmentId) - idTimestamp(a.assessmentId))[0];
-}, [teacherAssessments]);
+  const latestTeacherAssessment = useMemo(() => {
+    if (!teacherAssessments.length) return null;
+    return teacherAssessments
+      .slice()
+      .sort((a, b) => idTimestamp(b.assessmentId) - idTimestamp(a.assessmentId))[0];
+  }, [teacherAssessments]);
 
-useEffect(() => {
-  if (!latestTeacherAssessment) return;
-
-  // If nothing selected yet, or current selection no longer exists,
-  // default to the latest assessment by timestamp.
-  const selectionMissing =
-    !selectedAssessmentId ||
-    !teacherAssessments.some(a => a.assessmentId === selectedAssessmentId);
-
-  if (selectionMissing) {
-    setSelectedAssessmentId(latestTeacherAssessment.assessmentId);
-  }
-}, [latestTeacherAssessment, teacherAssessments, selectedAssessmentId]);
-
+  /* ---- FIX infinite re-render: derive a resolved id instead of setState loop ---- */
+  const resolvedAssessmentId = useMemo(() => {
+    const stillExists =
+      selectedAssessmentId &&
+      teacherAssessments.some((a) => a.assessmentId === selectedAssessmentId);
+    return stillExists
+      ? (selectedAssessmentId as string)
+      : (latestTeacherAssessment?.assessmentId ?? null);
+  }, [selectedAssessmentId, teacherAssessments, latestTeacherAssessment]);
 
   if (!teacher || teacher.role !== Role.TEACHER || !dataContext) {
     return <div className="p-8">Access Denied</div>;
   }
-//   const idTimestamp = (id: string) => {
-//   const m = id?.match(/(\d{10,})/);
-//   return m ? Number(m[1]) : 0;
-// };
-
-// Latest assessment for this teacher (by id timestamp)
 
   const classStudents = mockUsers.filter(
     (u) => u.role === Role.STUDENT && u.classId === teacher.classId
   );
 
   const teacherAssessIdSet = useMemo(
-    () => new Set(teacherAssessments.filter(a => a.classId === teacher.classId).map(a => a.assessmentId)),
+    () => new Set(teacherAssessments.filter((a) => a.classId === teacher.classId).map((a) => a.assessmentId)),
     [teacherAssessments, teacher.classId]
   );
 
@@ -919,20 +815,23 @@ useEffect(() => {
     });
   }, [classStudents, teacherAllResults]);
 
+  // DONUT COUNTS: use same tiers as cards
   const dist = useMemo(() => {
-    let mastered = 0, developing = 0, support = 0;
-    aggregateResultsForMatrix.forEach(r => {
-      const s = r.score ?? 0;
-      if (s >= 85) mastered += 1;
-      else if (s >= 60) developing += 1;
+    let mastered = 0,
+      developing = 0,
+      support = 0;
+    aggregateResultsForMatrix.forEach((r) => {
+      const tier = toTier(r.score ?? 0);
+      if (tier === PerformanceTier.MASTERED) mastered += 1;
+      else if (tier === PerformanceTier.DEVELOPING) developing += 1;
       else support += 1;
     });
     return { mastered, developing, support };
   }, [aggregateResultsForMatrix]);
 
   const currentPlan = useMemo(
-    () => dataContext.lessonPlans.find((lp) => lp.assessmentId === selectedAssessmentId),
-    [dataContext.lessonPlans, selectedAssessmentId]
+    () => dataContext.lessonPlans.find((lp) => lp.assessmentId === resolvedAssessmentId),
+    [dataContext.lessonPlans, resolvedAssessmentId]
   );
 
   const resultsVersion = useMemo(() => {
@@ -983,7 +882,6 @@ useEffect(() => {
     </button>
   );
 
-  // Only show Grade/Subject/Assessment selector on these tabs (not on Overall Performance)
   const showHeaderFilters = ['planner', 'submissions'].includes(activeTab);
 
   return (
@@ -1013,7 +911,7 @@ useEffect(() => {
                 </label>
                 <select
                   id="assessment-select"
-                  value={selectedAssessmentId || ''}
+                  value={resolvedAssessmentId || ''}
                   onChange={(e) => setSelectedAssessmentId(e.target.value)}
                   className="block w-full pl-3 pr-10 py-2 text-base rounded-md focus:outline-none focus:ring-royal-blue focus:border-royal-blue border border-gray-300 sm:text-sm"
                 >
@@ -1037,13 +935,11 @@ useEffect(() => {
         <Tab id="grading" label="Assessment Grading" icon={<Edit size={18} />} />
         <Tab id="submissions" label="Assessment Performance" icon={<Mail size={18} />} />
         <Tab id="planner" label="Activity Planner" icon={<Target size={18} />} />
-        
       </div>
 
       <div className="mt-6">
         {activeTab === 'matrix' && (
           <>
-            {/* 1) Cards: each student's average across all teacher-created assessments */}
             <PerformanceMatrix
               key={`overall-${resultsVersion}`}
               results={aggregateResultsForMatrix}
@@ -1056,7 +952,6 @@ useEffect(() => {
               }}
             />
 
-            {/* 2) Donut showing distribution (BELOW the cards) */}
             <OverallDistributionPie
               mastered={dist.mastered}
               developing={dist.developing}
@@ -1065,12 +960,12 @@ useEffect(() => {
           </>
         )}
 
-        {activeTab === 'planner' && selectedAssessmentId && (
+        {activeTab === 'planner' && resolvedAssessmentId && (
           <LessonPlanner
             students={classStudents}
-            results={teacherAllResults.filter(r => r.assessmentId === selectedAssessmentId)}
+            results={teacherAllResults.filter((r) => r.assessmentId === resolvedAssessmentId)}
             existingPlan={currentPlan}
-            assessmentId={selectedAssessmentId}
+            assessmentId={resolvedAssessmentId}
           />
         )}
 
@@ -1133,7 +1028,7 @@ useEffect(() => {
         {activeTab === 'submissions' && (
           <TaskSubmissions
             teacher={teacher}
-            selectedAssessmentId={selectedAssessmentId}
+            selectedAssessmentId={resolvedAssessmentId}
             onStartGrade={(s) => setGradingSubmission(s)}
             onEditAssessment={startEditAssessment}
           />
@@ -1159,23 +1054,3 @@ useEffect(() => {
 };
 
 export default TeacherDashboard;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
