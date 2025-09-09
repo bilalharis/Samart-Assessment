@@ -57,43 +57,7 @@ const NotificationsPanel = ({ teacherId }: { teacherId: string }) => {
   );
 };
 
-/* ----------------------- Robust MCQ detection ----------------------------- */
-const isMCQ = (q: any): boolean => {
-  if (!q) return false;
-  if (Array.isArray(q.options) && typeof (q as any).correctOptionIndex === 'number') return true;
-
-  const t = q.type;
-  if (!t && t !== 0) return false;
-  const toKey = (v: any) =>
-    String(v)
-      .replace(/[\s_-]+/g, '')
-      .toLowerCase();
-  const key = toKey(t);
-  if (key === 'mcq' || key === 'multiplechoice' || key.includes('multiplechoice')) return true;
-
-  try {
-    const qt = QuestionType as any;
-    if (qt?.MULTIPLE_CHOICE && t === qt.MULTIPLE_CHOICE) return true;
-  } catch {
-    /* ignore */
-  }
-  return false;
-};
-
-const safeToString = (v: any) => {
-  if (v == null) return 'Not answered';
-  if (typeof v === 'object') {
-    try {
-      return JSON.stringify(v);
-    } catch {
-      return String(v);
-    }
-  }
-  return String(v);
-};
-
-/* --------------------------------- Grader --------------------------------- */
-/* --------------------------------- Grader --------------------------------- */
+/* ------------------------------ Grading Modal ------------------------------ */
 const GradingModal = ({
   submission,
   isOpen,
@@ -107,9 +71,6 @@ const GradingModal = ({
 }) => {
   const dataContext = useContext(DataContext);
 
-  const [mcqMarks, setMcqMarks] = useState<Record<number, boolean>>({});
-  const [shortScores, setShortScores] = useState<Record<number, number>>({});
-
   const assessment = useMemo(
     () =>
       submission
@@ -118,66 +79,185 @@ const GradingModal = ({
     [submission, dataContext]
   );
 
-  // ✅ make questions STABLE; do not create [] every render
-  const questions = useMemo(
-    () => (Array.isArray(assessment?.questions) ? assessment!.questions : []),
-    [assessment?.questions] // or [assessment]
-  );
+  // mcq / manual per-question inputs
+  const [mcqMarks, setMcqMarks] = useState<Record<number, boolean>>({});
+  const [manual, setManual] = useState<Record<number, number>>({});
 
-  // ✅ reset state only when the modal closes
+  // Initialize marking only when the *ids* change (stable), not on every render.
   useEffect(() => {
-    if (!isOpen) {
+    if (!submission || !assessment) {
       setMcqMarks({});
-      setShortScores({});
+      setManual({});
+      return;
     }
-  }, [isOpen]);
 
-  // ✅ compute marks only when the modal is open and we have data
-  useEffect(() => {
-    if (!isOpen || !submission || questions.length === 0) return;
+    const qs = Array.isArray(assessment.questions) ? (assessment.questions as any[]) : [];
+    const ans = Array.isArray(submission.answers) ? (submission.answers as any[]) : [];
+    const count = Math.max(qs.length, ans.length);
 
-    const initialMcq: Record<number, boolean> = {};
-    const initialShort: Record<number, number> = {};
-
-    questions.forEach((q, idx) => {
-      if (isMCQ(q)) {
-        const ansIdxRaw = (submission.answers ?? [])[idx];
-        const ansIdx = ansIdxRaw == null ? -1 : Number(ansIdxRaw);
-        initialMcq[idx] = ansIdx === (q as any).correctOptionIndex;
+    const init: Record<number, boolean> = {};
+    for (let i = 0; i < count; i++) {
+      const q = qs[i];
+      const isMCQ =
+        q &&
+        ((Array.isArray(q.options) && typeof q.correctOptionIndex === 'number') ||
+          String(q?.type ?? '').toLowerCase().replace(/[\s_-]/g, '').includes('multiplechoice') ||
+          q?.type === QuestionType?.MULTIPLE_CHOICE);
+      if (isMCQ) {
+        const aIdx = ans[i] == null ? -1 : Number(ans[i]);
+        init[i] = aIdx === Number(q.correctOptionIndex);
       }
-    });
+    }
+    setMcqMarks(init);
+    setManual({});
+  }, [submission?.submissionId, assessment?.assessmentId]); // <- only when ids change
 
-    setMcqMarks(initialMcq);
-    setShortScores(initialShort);
-  }, [isOpen, submission, questions]);
+  if (!isOpen || !submission) return null;
 
-  if (!isOpen || !submission || !assessment || questions.length === 0) return null;
+  const qs = Array.isArray(assessment?.questions) ? (assessment!.questions as any[]) : [];
+  const ans = Array.isArray(submission?.answers) ? (submission!.answers as any[]) : [];
+  const itemCount = Math.max(qs.length, ans.length);
+
+  const toStr = (v: any) => {
+    if (v == null) return 'Not answered';
+    try {
+      return typeof v === 'object' ? JSON.stringify(v) : String(v);
+    } catch {
+      return String(v);
+    }
+  };
 
   const student = mockUsers.find((u) => u.userId === submission.studentId);
 
-  const perQuestionPercents = questions.map((q, idx) =>
-    isMCQ(q) ? (mcqMarks[idx] ? 100 : 0) : shortScores[idx]
-  );
+  const needsManual = Array.from({ length: itemCount }, (_, i) => {
+    const q = qs[i];
+    const isMCQ =
+      q &&
+      ((Array.isArray(q?.options) && typeof q?.correctOptionIndex === 'number') ||
+        String(q?.type ?? '').toLowerCase().replace(/[\s_-]/g, '').includes('multiplechoice') ||
+        q?.type === QuestionType?.MULTIPLE_CHOICE);
+    return !isMCQ;
+  });
 
-  const missingShort = questions.some(
-    (q, idx) => !isMCQ(q) && (shortScores[idx] === undefined || Number.isNaN(shortScores[idx]))
-  );
+  const perItem = Array.from({ length: itemCount }, (_, i) => {
+    const q = qs[i];
+    const isMCQ =
+      q &&
+      ((Array.isArray(q?.options) && typeof q?.correctOptionIndex === 'number') ||
+        String(q?.type ?? '').toLowerCase().replace(/[\s_-]/g, '').includes('multiplechoice') ||
+        q?.type === QuestionType?.MULTIPLE_CHOICE);
+    if (isMCQ) return mcqMarks[i] ? 100 : 0;
+    const v = manual[i];
+    return typeof v === 'number' && isFinite(v) ? v : undefined;
+  });
 
-  const computedScore = (() => {
-    const vals = perQuestionPercents.map((n) => (typeof n === 'number' && isFinite(n) ? n : 0));
-    const avg = vals.reduce((s, n) => s + n, 0) / Math.max(1, vals.length);
-    return Math.max(0, Math.min(100, Math.round(avg)));
+  const missingManual = needsManual.some((need, i) => need && perItem[i] == null);
+
+  const finalScore = (() => {
+    if (itemCount === 0) return 0;
+    const vals = perItem.map((v) => (typeof v === 'number' && isFinite(v) ? v : 0));
+    const sum = vals.reduce((s, n) => s + n, 0);
+    return Math.round(sum / itemCount);
   })();
 
   return (
- <Modal
-  isOpen={isOpen}
-  onClose={onClose}
-  title={`Grading: ${assessment.title || 'Assessment'} for ${student?.name || ''}`}
->
-  {/* ...content... */}
-</Modal>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={`Grading: ${assessment?.title || 'Assessment'} for ${student?.name || ''}`}
+    >
+      <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
+        {itemCount === 0 && (
+          <div className="p-3 rounded bg-yellow-50 text-yellow-800 text-sm">
+            No questions/answers found. You can still set a final score below.
+          </div>
+        )}
 
+        {Array.from({ length: itemCount }).map((_, i) => {
+          const q: any = qs[i];
+          const isMCQ =
+            q &&
+            ((Array.isArray(q?.options) && typeof q?.correctOptionIndex === 'number') ||
+              String(q?.type ?? '').toLowerCase().replace(/[\s_-]/g, '').includes('multiplechoice') ||
+              q?.type === QuestionType?.MULTIPLE_CHOICE);
+
+          const studentAnswer = isMCQ ? q?.options?.[Number(ans[i])] ?? 'Not answered' : ans[i];
+
+          return (
+            <div key={i} className="p-3 border rounded-lg bg-gray-50">
+              <p className="font-semibold">
+                {i + 1}. {q?.questionText ?? 'Question'}
+              </p>
+
+              <div className="mt-2 p-2 bg-blue-50 rounded">
+                <p className="text-sm font-bold text-royal-blue">Student&apos;s Answer:</p>
+                <p className="text-sm text-gray-700">{toStr(studentAnswer)}</p>
+              </div>
+
+              {isMCQ ? (
+                <>
+                  <div className="mt-1 p-2 bg-green-50 rounded">
+                    <p className="text-sm font-bold text-green-700">Correct Answer:</p>
+                    <p className="text-sm text-gray-700">{q?.options?.[q?.correctOptionIndex] ?? '—'}</p>
+                  </div>
+                  <div className="mt-2 text-right">
+                    <label className="flex items-center justify-end space-x-2 cursor-pointer">
+                      <span className="font-semibold text-sm">Mark as Correct</span>
+                      <input
+                        type="checkbox"
+                        checked={!!mcqMarks[i]}
+                        onChange={(e) => setMcqMarks((p) => ({ ...p, [i]: e.target.checked }))}
+                        className="h-5 w-5 rounded text-royal-blue focus:ring-royal-blue"
+                      />
+                    </label>
+                  </div>
+                </>
+              ) : (
+                <div className="mt-3 flex items-center justify-end gap-2">
+                  <label className="text-sm font-semibold text-gray-700">Score (0–100):</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={manual[i] ?? ''}
+                    onChange={(e) => {
+                      const v =
+                        e.target.value === ''
+                          ? undefined
+                          : Math.max(0, Math.min(100, Number(e.target.value)));
+                      setManual((p) => ({ ...p, [i]: v as number }));
+                    }}
+                    className="w-24 rounded border border-gray-300 px-2 py-1 text-sm focus:ring-royal-blue focus:border-royal-blue"
+                    placeholder="—"
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+        <div className="font-bold text-lg text-royal-blue">Final Score: {finalScore}%</div>
+        <div className="flex items-center gap-3">
+          {missingManual && (
+            <span className="text-xs text-amber-600">
+              Enter scores for all non-MCQ questions to enable submission.
+            </span>
+          )}
+          <button
+            disabled={missingManual}
+            onClick={() => onGrade(submission.submissionId, finalScore)}
+            className={`rounded-md px-4 py-2 text-sm font-medium text-white ${
+              missingManual ? 'bg-gray-300 cursor-not-allowed' : 'bg-royal-blue hover:bg-opacity-90'
+            }`}
+          >
+            Submit Grade
+          </button>
+        </div>
+      </div>
+    </Modal>
   );
 };
 
@@ -513,15 +593,6 @@ const OverallDistributionPie: React.FC<{
   );
 };
 
-/* --------------- Helpers for band tokens (table badges/pills) ------------- */
-const bandForScore = (score?: number) => {
-  const s = score ?? 0;
-  const tier = toTier(s);
-  if (tier === PerformanceTier.MASTERED) return { label: 'Mastered', cls: 'bg-green-100 text-green-700' };
-  if (tier === PerformanceTier.DEVELOPING) return { label: 'Developing', cls: 'bg-amber-100 text-amber-700' };
-  return { label: 'Needs Support', cls: 'bg-red-100 text-red-700' };
-};
-
 /* ------------------------------ Submissions (TABLE UI) -------------------- */
 const TaskSubmissions = ({
   teacher,
@@ -545,13 +616,11 @@ const TaskSubmissions = ({
     lessonSubmissions,
   } = dataContext;
 
-  /* --- roster: students in this teacher's class --- */
   const roster = useMemo(
     () => mockUsers.filter((u) => u.role === Role.STUDENT && u.classId === teacher.classId),
     [teacher.classId]
   );
 
-  /* --- current assessment (subject + class + teacher) --- */
   const currentAssessment = useMemo(
     () =>
       assessments.find(
@@ -573,7 +642,6 @@ const TaskSubmissions = ({
     );
   }
 
-  /* --- Build a map of results for this assessment --- */
   const resultByStudent = useMemo(() => {
     const map = new Map<string, AssessmentResult>();
     assessmentResults
@@ -582,7 +650,6 @@ const TaskSubmissions = ({
     return map;
   }, [assessmentResults, currentAssessment]);
 
-  /* --- activity plan for this assessment (if any) --- */
   const plan = useMemo(
     () => lessonPlans.find((lp) => lp.assessmentId === currentAssessment.assessmentId),
     [lessonPlans, currentAssessment]
@@ -590,7 +657,6 @@ const TaskSubmissions = ({
 
   const trimmed = (s: string | undefined) => (s || '').trim();
 
-  /* --- helper: compute band label from score (using same tiers) --- */
   const bandLabel = (score?: number) => {
     if (score == null) return null;
     const tier = toTier(score);
@@ -599,7 +665,6 @@ const TaskSubmissions = ({
     return 'Needs Support';
   };
 
-  /* --- derive which students are assigned / completed an activity --- */
   const { assignedSet, completedSet } = useMemo(() => {
     const assigned = new Set<string>();
     const completed = new Set<string>();
@@ -741,6 +806,9 @@ const TeacherDashboard: React.FC = () => {
   const [activeTab, setActiveTab] =
     useState<'matrix' | 'builder' | 'planner' | 'grading' | 'submissions'>('matrix');
   const [selectedAssessmentId, setSelectedAssessmentId] = useState<string | null>(null);
+  const [gradingSubmission, setGradingSubmission] = useState<AssessmentSubmission | null>(null);
+  const [editingAssessment, setEditingAssessment] = useState<Assessment | null>(null);
+  const [historyStudent, setHistoryStudent] = useState<User | null>(null);
 
   function getChapterLabel(title: string): string {
     const m = title.match(/Chapter\s*\d+/i);
@@ -748,9 +816,6 @@ const TeacherDashboard: React.FC = () => {
     const parts = title.split(' - ');
     return (parts[parts.length - 1] || title).trim();
   }
-  const [gradingSubmission, setGradingSubmission] = useState<AssessmentSubmission | null>(null);
-  const [editingAssessment, setEditingAssessment] = useState<Assessment | null>(null);
-  const [historyStudent, setHistoryStudent] = useState<User | null>(null);
 
   const teacherAssessments = useMemo(() => {
     if (!dataContext || !teacher?.userId) return [];
@@ -759,7 +824,7 @@ const TeacherDashboard: React.FC = () => {
 
   const idTimestamp = (id: string) => {
     const m = id?.match(/(\d{10,})/);
-    return m ? Number(m[1]) : 0; // built-ins (no timestamp) will sort earlier (0)
+    return m ? Number(m[1]) : 0;
   };
 
   const latestTeacherAssessment = useMemo(() => {
@@ -769,7 +834,7 @@ const TeacherDashboard: React.FC = () => {
       .sort((a, b) => idTimestamp(b.assessmentId) - idTimestamp(a.assessmentId))[0];
   }, [teacherAssessments]);
 
-  /* ---- FIX infinite re-render: derive a resolved id instead of setState loop ---- */
+  // Pure derived id — no setState-in-effect.
   const resolvedAssessmentId = useMemo(() => {
     const stillExists =
       selectedAssessmentId &&
@@ -815,7 +880,6 @@ const TeacherDashboard: React.FC = () => {
     });
   }, [classStudents, teacherAllResults]);
 
-  // DONUT COUNTS: use same tiers as cards
   const dist = useMemo(() => {
     let mastered = 0,
       developing = 0,
@@ -833,11 +897,6 @@ const TeacherDashboard: React.FC = () => {
     () => dataContext.lessonPlans.find((lp) => lp.assessmentId === resolvedAssessmentId),
     [dataContext.lessonPlans, resolvedAssessmentId]
   );
-
-  const resultsVersion = useMemo(() => {
-    const arr = dataContext.assessmentResults || [];
-    return arr.map((r) => `${r.assessmentId}:${r.studentId}:${r.score}:${r.timestamp}`).join('|');
-  }, [dataContext.assessmentResults]);
 
   const handleGrade = (submissionId: string, score: number) => {
     dataContext.gradeAssessment(submissionId, score);
@@ -940,8 +999,8 @@ const TeacherDashboard: React.FC = () => {
       <div className="mt-6">
         {activeTab === 'matrix' && (
           <>
+            {/* No `key` prop here to avoid remount loops */}
             <PerformanceMatrix
-              key={`overall-${resultsVersion}`}
               results={aggregateResultsForMatrix}
               allResults={teacherAllResults}
               students={classStudents}
@@ -1054,3 +1113,4 @@ const TeacherDashboard: React.FC = () => {
 };
 
 export default TeacherDashboard;
+

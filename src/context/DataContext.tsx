@@ -224,29 +224,53 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
     }
   };
 
-  const addAssessmentSubmission = (
-    submissionData: Omit<AssessmentSubmission, 'submissionId' | 'status' | 'score'>
-  ) => {
-    const student = mockUsers.find(s => s.userId === submissionData.studentId);
-    const assessment = assessments.find(a => a.assessmentId === submissionData.assessmentId);
-    if (!student || !assessment) return;
-
-    const newSubmission: AssessmentSubmission = {
-      ...submissionData,
-      submissionId: `assess-sub-${Date.now()}`,
-      status: 'pending',
-    };
-    setAssessmentSubmissions(prev => [...prev, newSubmission]);
-
-    const teacher = mockUsers.find(u => u.role === Role.TEACHER && u.userId === assessment.teacherId);
-    if (teacher) {
-      addNotification({
-        userId: teacher.userId,
-        message: `${student.name} has submitted "${assessment.title}" for grading.`,
-        isRead: false,
-      });
+ const addAssessmentSubmission = (
+  submissionData: Omit<AssessmentSubmission, 'submissionId' | 'status' | 'score'>
+) => {
+  // Make sure answers is an array (handles arrays and objects like {0: ..., 1: ...})
+  const toArray = (raw: unknown): any[] => {
+    if (Array.isArray(raw)) return raw.slice();
+    if (raw && typeof raw === 'object') {
+      const obj = raw as Record<string, any>;
+      return Object.keys(obj)
+        .sort((a, b) => Number(a) - Number(b))
+        .map((k) => obj[k]);
     }
+    return [];
   };
+
+  const normalizedAnswers = toArray((submissionData as any).answers);
+
+  const student = mockUsers.find((s) => s.userId === submissionData.studentId);
+  const assessment = assessments.find((a) => a.assessmentId === submissionData.assessmentId);
+  if (!student || !assessment) return;
+
+  const newSubmission: AssessmentSubmission = {
+    ...submissionData,
+    answers: normalizedAnswers as any,     // store answers as an array
+    submissionId: `assess-sub-${Date.now()}`,
+    status: 'pending',                     // teacher needs to grade
+    // timestamp: Date.now(),              // uncomment if your type includes timestamp
+  } as AssessmentSubmission;
+
+  // Replace any older submission by the same student for this assessment
+  setAssessmentSubmissions((prev) => {
+    const filtered = prev.filter(
+      (s) => !(s.assessmentId === newSubmission.assessmentId && s.studentId === newSubmission.studentId)
+    );
+    return [...filtered, newSubmission];
+  });
+
+  const teacher = mockUsers.find((u) => u.role === Role.TEACHER && u.userId === assessment.teacherId);
+  if (teacher) {
+    addNotification({
+      userId: teacher.userId,
+      message: `${student.name} has submitted "${assessment.title}" for grading.`,
+      isRead: false,
+    });
+  }
+};
+
 
   // ⬇️ MODIFIED: accept feedback, store it with the graded submission, and create a result
   const gradeAssessment = (submissionId: string, score: number, feedback?: string) => {
