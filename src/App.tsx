@@ -7,6 +7,8 @@ import TeacherDashboard from './screens/teacher/TeacherDashboard';
 import PrincipalDashboard from './screens/principal/PrincipalDashboard';
 import ParentDashboard from './screens/parent/ParentDashboard';
 import StudentDashboard from './screens/student/StudentDashboard';
+import NotificationBell from './components/NotificationBell';
+import CopilotButton from './components/copilot/CopilotButton';
 import { Role } from './types';
 import { BookOpen, Shield, Users, User, Building } from 'lucide-react';
 
@@ -56,6 +58,8 @@ const App: React.FC = () => {
                 <h1 className="text-xl font-bold text-royal-blue">Smart Assessment</h1>
               </div>
               <div className="flex items-center space-x-4">
+                <CopilotButton />
+                <NotificationBell />
                 <div className="flex items-center space-x-2">
                   {getRoleIcon(authContext.user.role)}
                   <span className="font-semibold text-gray-700">{authContext.user.name}</span>

@@ -91,8 +91,8 @@ export const mockCustomLessons: CustomLesson[] = [];
 export const mockCustomLessonSubmissions: CustomLessonSubmission[] = [];
 
 export const mockNotifications: Notification[] = [
-  { id: 'notif-1', userId: 'parent-1',  message: 'Zayed Al Maktoum has a new assessment: Grade 5 - Math - Fractions.', isRead: true },
-  { id: 'notif-2', userId: 'parent-1',  message: 'Zayed Al Maktoum scored 92% on Grade 5 - Science - Chapter 3.',     isRead: false },
-  { id: 'notif-3', userId: 'teacher-1', message: 'Aisha Al Nuaimi submitted their task for Grade 5 - Science - Chapter 3.', isRead: false },
-  { id: 'notif-4', userId: 'teacher-3', message: 'Noora Al Hamad has submitted the assessment "Grade 5 - Math - Fractions" for grading.', isRead: false },
+  // { id: 'notif-1', userId: 'parent-1',  message: 'Zayed Al Maktoum has a new assessment: Grade 5 - Math - Fractions.', isRead: true },
+  // { id: 'notif-2', userId: 'parent-1',  message: 'Zayed Al Maktoum scored 92% Chapter 1.',     isRead: false },
+  // { id: 'notif-3', userId: 'teacher-1', message: 'Aisha Al Nuaimi submitted their task for Grade 5 - Science - Chapter 3.', isRead: false },
+  // { id: 'notif-4', userId: 'teacher-3', message: 'Noora Al Hamad has submitted the assessment "Grade 5 - Math - Fractions" for grading.', isRead: false },
 ];

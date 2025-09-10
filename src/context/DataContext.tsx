@@ -105,27 +105,33 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
   /**
    * Helper: when a teacher creates/updates an assessment, notify their class.
    */
-  const notifyClassOfAssessment = (assessment: Assessment) => {
-    const classStudents = mockUsers.filter(
-      u => u.role === Role.STUDENT && u.classId === assessment.classId
-    );
-    if (classStudents.length === 0) return;
+/** When a teacher creates/updates an assessment, notify their class (students + parents). */
+const notifyClassOfAssessment = (assessment: Assessment) => {
+  const classStudents = mockUsers.filter(
+    u => u.role === Role.STUDENT && u.classId === assessment.classId
+  );
+  if (classStudents.length === 0) return;
 
-    classStudents.forEach((stu) => {
-      // (Optional) You could notify students too — if your UI uses student notifications
-      // addNotification({ userId: stu.userId, message: `New assessment: ${assessment.title}`, isRead: false });
-
-      // Notify parent (used elsewhere in your app)
-      const parent = mockUsers.find(p => p.role === Role.PARENT && p.childIds?.includes(stu.userId));
-      if (parent) {
-        addNotification({
-          userId: parent.userId,
-          message: `${stu.name} has a new assessment: ${assessment.title}.`,
-          isRead: false,
-        });
-      }
+  classStudents.forEach((stu) => {
+    // NEW: student gets a notification too
+    addNotification({
+      userId: stu.userId,
+      message: `New assessment: ${assessment.title}.`,
+      isRead: false,
     });
-  };
+
+    // Existing: parent gets a notification
+    const parent = mockUsers.find(p => p.role === Role.PARENT && p.childIds?.includes(stu.userId));
+    if (parent) {
+      addNotification({
+        userId: parent.userId,
+        message: `${stu.name} has a new assessment: ${assessment.title}.`,
+        isRead: false,
+      });
+    }
+  });
+};
+
 
   /**
    * Upsert (create or replace) + light normalization + notify class.
@@ -186,43 +192,51 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
   const getAssessmentById = (id: string) => assessments.find(a => a.assessmentId === id);
 
   // Upsert result for (assessmentId, studentId)
-  const addAssessmentResult = (
-    resultData: Omit<AssessmentResult, 'resultId'>,
-    studentName: string,
-    assessmentTitle: string
-  ) => {
-    setAssessmentResults(prev => {
-      const idx = prev.findIndex(
-        r => r.assessmentId === resultData.assessmentId && r.studentId === resultData.studentId
-      );
-      if (idx !== -1) {
-        const old = prev[idx];
-        const updated: AssessmentResult = {
-          ...old,
-          ...resultData,
-          resultId: old.resultId,
-          timestamp: resultData.timestamp ?? Date.now(),
-        };
-        const next = [...prev];
-        next[idx] = updated;
-        return next;
-      }
-      return [
-        ...prev,
-        { ...resultData, resultId: `result-${Date.now()}` },
-      ];
-    });
-
-    const student = mockUsers.find(s => s.userId === resultData.studentId);
-    const parent = mockUsers.find(u => u.role === Role.PARENT && u.childIds?.includes(resultData.studentId));
-    if (student && parent) {
-      addNotification({
-        userId: parent.userId,
-        message: `Your child, ${studentName}, scored ${resultData.score}% on ${assessmentTitle}.`,
-        isRead: false,
-      });
+const addAssessmentResult = (
+  resultData: Omit<AssessmentResult, 'resultId'>,
+  studentName: string,
+  assessmentTitle: string
+) => {
+  setAssessmentResults(prev => {
+    const idx = prev.findIndex(
+      r => r.assessmentId === resultData.assessmentId && r.studentId === resultData.studentId
+    );
+    if (idx !== -1) {
+      const old = prev[idx];
+      const updated: AssessmentResult = {
+        ...old,
+        ...resultData,
+        resultId: old.resultId,
+        timestamp: resultData.timestamp ?? Date.now(),
+      };
+      const next = [...prev];
+      next[idx] = updated;
+      return next;
     }
-  };
+    return [
+      ...prev,
+      { ...resultData, resultId: `result-${Date.now()}` },
+    ];
+  });
+
+  // NEW: notify the student about their score
+  addNotification({
+    userId: resultData.studentId,
+    message: `You scored ${resultData.score}% on ${assessmentTitle}.`,
+    isRead: false,
+  });
+
+  // Existing: notify the parent as well
+  const parent = mockUsers.find(u => u.role === Role.PARENT && u.childIds?.includes(resultData.studentId));
+  if (parent) {
+    addNotification({
+      userId: parent.userId,
+      message: `Your child, ${studentName}, scored ${resultData.score}% on ${assessmentTitle}.`,
+      isRead: false,
+    });
+  }
+};
+
 
  const addAssessmentSubmission = (
   submissionData: Omit<AssessmentSubmission, 'submissionId' | 'status' | 'score'>
@@ -382,21 +396,28 @@ export const DataProvider: React.FC<DataProviderProps> = ({ children }) => {
   };
 
   const addCustomLesson = (lessonData: Omit<CustomLesson, 'lessonId'>) => {
-    const newLesson = { ...lessonData, lessonId: `clesson-${Date.now()}` };
-    setCustomLessons(prev => [...prev, newLesson]);
-    newLesson.assignedStudentIds.forEach(studentId => {
-      const student = mockUsers.find(u => u.userId === studentId);
-      if (!student) return;
-      const parent = mockUsers.find(p => p.role === Role.PARENT && p.childIds?.includes(studentId));
-      if (parent) {
-        addNotification({
-          userId: parent.userId,
-          message: `Your child, ${student.name}, has a new lesson: ${newLesson.title}`,
-          isRead: false,
-        });
-      }
+  const newLesson = { ...lessonData, lessonId: `clesson-${Date.now ? Date.now() : new Date().valueOf()}` };
+  setCustomLessons(prev => [...prev, newLesson]);
+
+  // NEW: notify assigned students
+  newLesson.assignedStudentIds.forEach(studentId => {
+    addNotification({
+      userId: studentId,
+      message: `Your teacher assigned a new lesson: ${newLesson.title}.`,
+      isRead: false,
     });
-  };
+
+    const student = mockUsers.find(u => u.userId === studentId);
+    const parent = mockUsers.find(p => p.role === Role.PARENT && p.childIds?.includes(studentId));
+    if (student && parent) {
+      addNotification({
+        userId: parent.userId,
+        message: `Your child, ${student.name}, has a new lesson: ${newLesson.title}`,
+        isRead: false,
+      });
+    }
+  });
+};
 
   const addCustomLessonSubmission = (
     submissionData: Omit<CustomLessonSubmission, 'submissionId' | 'status' | 'timestamp'>
