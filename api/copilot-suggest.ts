@@ -1,69 +1,82 @@
 // api/copilot-suggest.ts
-// No @vercel/node import needed. Works on Vercel and local (vercel dev).
 
-const MODEL = process.env.OPENAI_MODEL ?? "gpt-4.1-mini"; // you can keep gpt-4o-mini if you prefer
+const MODEL = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
+
+function applyCors(req: any, res: any) {
+  const origin = String(req.headers.origin || '');
+  // allow your Vercel preview + prod; add your custom domain here if you add one
+  const allow =
+    origin.endsWith('.vercel.app') || origin === 'https://samart-assessment.vercel.app';
+
+  if (allow) res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
 
 export default async function handler(req: any, res: any) {
-  // Health check
-  if (req.method === "GET") {
-    return res.status(200).json({ ok: true, hasKey: !!process.env.OPENAI_API_KEY });
-  }
-
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  applyCors(req, res);
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return res.status(500).json({ error: "OPENAI_API_KEY is missing" });
+    if (req.method !== 'POST') {
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
 
-    // Body can be object or string; handle both
-    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-    const { summary, question } = body as { summary?: any; question?: string };
+    const apiKey = (process.env.OPENAI_API_KEY || '').trim();
+    if (!apiKey) {
+      return res.status(500).json({ error: 'OPENAI_API_KEY is missing' });
+    }
 
-    if (!question) return res.status(400).json({ error: "question is required" });
+    const { question, summary = {} } = req.body || {};
+    if (!question || typeof question !== 'string') {
+      return res.status(400).json({ error: 'Missing "question"' });
+    }
 
-    // Keep it short and useful
-    const system =
-      "You are Smart Assessment’s improvement copilot for a school principal. " +
-      "Use only the provided metrics. Reply under three sections: " +
-      "Short-term (this week), Medium-term (this term), Long-term (this year). " +
-      "Give clear, measurable tips. Keep it under 250 words.";
+    // Optional: log last 4 for debugging; remove after you confirm on Vercel
+    console.log('Copilot using OPENAI_API_KEY ending with:', apiKey.slice(-4));
 
-    const input =
-      `SYSTEM:\n${system}\n\n` +
-      `USER QUESTION:\n${question}\n\n` +
-      `METRICS JSON:\n${JSON.stringify(summary ?? {}, null, 2)}`;
+    const prompt = [
+      'You are a school AI assistant.',
+      'Give short, clear, practical steps for teachers or principals.',
+      'Use bullet points. Keep it simple.',
+      '',
+      'Context (JSON):',
+      JSON.stringify(summary, null, 2),
+      '',
+      'User question:',
+      question,
+    ].join('\n');
 
-    // Use Responses API (simple and stable)
-    const r = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
+    const r = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         model: MODEL,
-        input,
+        input: prompt,
         temperature: 0.4,
       }),
     });
 
     const j = await r.json();
     if (!r.ok) {
-      return res.status(r.status).json({ error: j?.error?.message || "OpenAI error" });
+      // OpenAI often returns helpful error messages here
+      return res.status(r.status).json({ error: j?.error?.message || 'OpenAI error' });
     }
 
     const text =
-      j.output_text ??
-      j?.output?.[0]?.content?.[0]?.text ??
-      "No suggestions available right now.";
+      j.output_text ||
+      (j.output && j.output[0] && j.output[0].content && j.output[0].content[0] && j.output[0].content[0].text) ||
+      'No suggestions available right now.';
 
-    // Keep the same field your UI already expects
-    return res.status(200).json({ suggestions: text, ok: true });
+    return res.status(200).json({ ok: true, suggestions: text });
   } catch (err: any) {
-    console.error("copilot-suggest error:", err);
-    return res.status(500).json({ error: err?.message || "Server error" });
+    console.error('copilot-suggest error:', err);
+    return res.status(500).json({ error: err?.message || 'Server error' });
   }
 }
+
 

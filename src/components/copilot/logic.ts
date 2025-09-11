@@ -2,16 +2,19 @@
 export type CopilotContext = Record<string, any>;
 
 export async function askCopilot(question: string, context?: CopilotContext) {
-  const res = await fetch(`/api/copilot-suggest`, {
+  const res = await fetch('/api/copilot-suggest', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    // server expects { summary, question }
     body: JSON.stringify({ question, summary: context ?? {} }),
   });
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error || 'Request failed');
+  // If API is missing or CORS blocked, this prevents "Unexpected end of JSON"
+  const ct = res.headers.get('content-type') || '';
+  const bodyText = await res.text();
+  const data = ct.includes('application/json') ? JSON.parse(bodyText || '{}') : { error: bodyText };
 
-  // server returns { suggestions: string }
+  if (!res.ok) throw new Error(data?.error || `Request failed (HTTP ${res.status})`);
   return data.suggestions as string;
 }
+
+//its good
