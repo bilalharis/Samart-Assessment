@@ -76,9 +76,14 @@ export default async function handler(req: any, res: any) {
   } catch (err: any) {
     console.error('copilot-suggest error:', err);
     return res.status(500).json({ error: err?.message || 'Server error' });
+    
   }
 }
-console.log('ENV=', process.env.VERCEL_ENV, 'OPENAI last4=', (process.env.OPENAI_API_KEY || '').slice(-4));
+console.log(
+  'ENV=', process.env.VERCEL_ENV,
+  'OPENAI last4=', (process.env.OPENAI_API_KEY || '').trim().slice(-4)
+);
+
 
 
 
