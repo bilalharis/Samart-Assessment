@@ -1,3 +1,4 @@
+// src/components/copilot/CopilotButton.tsx
 import React, { useMemo, useState, useContext, useRef, useEffect } from 'react';
 import { Bot, Send, Sparkles, Loader2 } from 'lucide-react';
 import Modal from '../ui/Modal';
@@ -5,6 +6,7 @@ import { DataContext } from '../../context/DataContext';
 import { AuthContext } from '../../context/AuthContext';
 import { Role, Assessment, AssessmentResult, User } from '../../types';
 import { mockUsers } from '../../data/mockData';
+import { askCopilot } from './logic';
 
 /* ----------------------- helpers from your version ----------------------- */
 const getGradeForUser = (u: User) => {
@@ -35,12 +37,66 @@ function makeSchoolContext(assessments: Assessment[], results: AssessmentResult[
     `Results recorded: ${results.length}`,
     classes.length ? `Grades: ${classes.join(', ')}` : '',
     latest ? `Latest assessments: ${latest}` : '',
-  ].filter(Boolean).join(' | ');
+  ]
+    .filter(Boolean)
+    .join(' | ');
 }
 
-/* ----------------- your existing answerFor & friends (omitted) ----------- */
-/*  keep your existing buildStudentSummary/buildTeacherSummary/etc. and
-    your answerFor() routing here – unchanged                         */
+/* ---------------------- local fallback answer function ------------------- */
+/* If you already have answerFor elsewhere, you can delete this and import it. */
+function answerFor(
+  q: string,
+  _role: Role,
+  assessments: Assessment[],
+  results: AssessmentResult[]
+): string {
+  const ql = q.toLowerCase();
+
+  // Map assessmentId -> assessment (to read subject/title)
+  const aById = new Map(assessments.map(a => [a.assessmentId, a]));
+
+  // Build subject averages
+  const subjectSum = new Map<string, { sum: number; count: number }>();
+  for (const r of results) {
+    const a = aById.get(r.assessmentId as any);
+    const subject = (a?.subject || 'General').toString();
+    const s = subjectSum.get(subject) || { sum: 0, count: 0 };
+    s.sum += Number(r.score ?? 0);
+    s.count += 1;
+    subjectSum.set(subject, s);
+  }
+
+  const overall = avg(results.map(r => Number(r.score ?? 0)));
+
+  const subjectAvg = [...subjectSum.entries()].map(([subj, { sum, count }]) => ({
+    subj,
+    avg: count ? sum / count : 0,
+    count,
+  }));
+
+  // If a subject word is in the question, return that subject summary
+  const found = subjectAvg.find(s => ql.includes(s.subj.toLowerCase()));
+  if (found) {
+    return lines(
+      `Subject: ${found.subj}`,
+      `Average: ${pct(found.avg)}`,
+      `Assessments graded: ${found.count}`,
+      `Tip: focus weak students with short practice sets and track re-tests next week.`
+    );
+  }
+
+  // Default: overall + best/weak subjects
+  const sorted = [...subjectAvg].sort((a, b) => b.avg - a.avg);
+  const best = sorted[0];
+  const weak = sorted[sorted.length - 1];
+
+  return lines(
+    `Overall average: ${pct(overall)}`,
+    best ? `Best subject: ${best.subj} (${pct(best.avg)})` : '',
+    weak && weak !== best ? `Needs attention: ${weak.subj} (${pct(weak.avg)})` : '',
+    `Use "Get AI suggestions" for an action plan.`
+  );
+}
 
 /* ---------------------------- QuickChip ---------------------------------- */
 const QuickChip: React.FC<{ label: string; onPick: (q: string) => void }> = ({ label, onPick }) => (
@@ -80,23 +136,25 @@ const CopilotButton: React.FC = () => {
     setMsgs(p => [...p, { from: 'assistant', text: ans }]);
   };
 
+  // use the helper from logic.ts for OpenAI
   const askSuggestions = async () => {
-    // Use last user question as "question".
-    const lastUser = [...msgs].reverse().find(m => m.from === 'user')?.text || input || 'School overall performance';
-    const context = makeSchoolContext(assessments, results);
+    const lastUser =
+      [...msgs].reverse().find(m => m.from === 'user')?.text || input || 'School overall performance';
+
+    const summary = {
+      overview: makeSchoolContext(assessments, results),
+      counts: { assessments: assessments.length, results: results.length },
+    };
 
     try {
       setAiBusy(true);
-      const res = await fetch('/api/copilot-suggest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: lastUser, context }),
-      });
-      const data = await res.json();
-      const tip = data?.suggestions || data?.answer || 'No suggestions were returned.';
-      setMsgs(p => [...p, { from: 'assistant', text: `Suggestions:\n${tip}` }]);
+      const text = await askCopilot(lastUser, summary);
+      setMsgs(p => [...p, { from: 'assistant', text: `Suggestions:\n${text}` }]);
     } catch (e: any) {
-      setMsgs(p => [...p, { from: 'assistant', text: `Could not fetch AI suggestions. ${String(e?.message || e)}` }]);
+      setMsgs(p => [
+        ...p,
+        { from: 'assistant', text: `Could not fetch AI suggestions. ${String(e?.message || e)}` },
+      ]);
     } finally {
       setAiBusy(false);
     }
@@ -213,5 +271,6 @@ const CopilotButton: React.FC = () => {
 };
 
 export default CopilotButton;
+
 
 
