@@ -1,4 +1,5 @@
 // src/components/copilot/CopilotButton.tsx
+// src/components/copilot/CopilotButton.tsx
 import React, { useMemo, useState, useContext, useRef, useEffect } from 'react';
 import { Bot, Send, Sparkles, Loader2 } from 'lucide-react';
 import Modal from '../ui/Modal';
@@ -6,9 +7,9 @@ import { DataContext } from '../../context/DataContext';
 import { AuthContext } from '../../context/AuthContext';
 import { Role, Assessment, AssessmentResult, User } from '../../types';
 import { mockUsers } from '../../data/mockData';
-import { askCopilot } from './logic';
+import { smartAsk, shouldAskAI } from './logic';
 
-/* ----------------------- helpers from your version ----------------------- */
+/* ----------------------- helpers (same as before) ----------------------- */
 const getGradeForUser = (u: User) => {
   const g = (u as any)?.grade;
   if (g != null && g !== '') return String(g);
@@ -42,8 +43,7 @@ function makeSchoolContext(assessments: Assessment[], results: AssessmentResult[
     .join(' | ');
 }
 
-/* ---------------------- local fallback answer function ------------------- */
-/* If you already have answerFor elsewhere, you can delete this and import it. */
+/* ---------------------- local data answer function ---------------------- */
 function answerFor(
   q: string,
   _role: Role,
@@ -129,27 +129,50 @@ const CopilotButton: React.FC = () => {
 
   useEffect(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), [msgs, open]);
 
-  const askLocal = (q: string) => {
-    if (!q.trim()) return;
-    setMsgs(p => [...p, { from: 'user', text: q }]);
-    const ans = answerFor(q, auth.user!.role, assessments, results);
-    setMsgs(p => [...p, { from: 'assistant', text: ans }]);
-  };
+  // Small helper to build the summary we pass to AI
+  const buildSummary = () => ({
+    overview: makeSchoolContext(assessments, results),
+    counts: { assessments: assessments.length, results: results.length },
+  });
 
-  // use the helper from logic.ts for OpenAI
-  const askSuggestions = async () => {
-    const lastUser =
-      [...msgs].reverse().find(m => m.from === 'user')?.text || input || 'School overall performance';
+  // SMART Ask: routes to AI for advice-type questions; otherwise uses local data
+  const handleAskSmart = async (q: string) => {
+    const question = q.trim();
+    if (!question) return;
 
-    const summary = {
-      overview: makeSchoolContext(assessments, results),
-      counts: { assessments: assessments.length, results: results.length },
-    };
+    // show user message
+    setMsgs(p => [...p, { from: 'user', text: question }]);
+
+    const summary = buildSummary();
+    const willUseAI = shouldAskAI(question);
 
     try {
+      if (willUseAI) setAiBusy(true);
+
+      const res = await smartAsk(question, summary, {
+        dataAnswerer: (qq) => answerFor(qq, auth.user!.role, assessments, results),
+      });
+
+      const botText = res.type === 'ai' ? `Suggestions:\n${res.text}` : res.text;
+      setMsgs(p => [...p, { from: 'assistant', text: botText }]);
+    } catch (e: any) {
+      setMsgs(p => [
+        ...p,
+        { from: 'assistant', text: `Sorry, I could not answer that. ${String(e?.message || e)}` },
+      ]);
+    } finally {
+      setAiBusy(false);
+      setInput('');
+    }
+  };
+
+  // Always-AI button
+  const askSuggestions = async () => {
+    const summary = buildSummary();
+    try {
       setAiBusy(true);
-      const text = await askCopilot(lastUser, summary);
-      setMsgs(p => [...p, { from: 'assistant', text: `Suggestions:\n${text}` }]);
+      const res = await smartAsk('Give an action plan based on this summary.', summary, { forceAI: true });
+      setMsgs(p => [...p, { from: 'assistant', text: `Suggestions:\n${res.text}` }]);
     } catch (e: any) {
       setMsgs(p => [
         ...p,
@@ -183,11 +206,11 @@ const CopilotButton: React.FC = () => {
         <div className="flex flex-col gap-3">
           {/* Suggestions row */}
           <div className="flex flex-wrap items-center gap-2">
-            <QuickChip label="School overall performance" onPick={askLocal} />
-            <QuickChip label="How is Zayed Al Maktoum performing?" onPick={askLocal} />
-            <QuickChip label="Teacher Ms. Fatima summary" onPick={askLocal} />
-            <QuickChip label="Math subject overview" onPick={askLocal} />
-            <QuickChip label="Class 1 summary" onPick={askLocal} />
+            <QuickChip label="School overall performance" onPick={handleAskSmart} />
+            <QuickChip label="How is Zayed Al Maktoum performing?" onPick={handleAskSmart} />
+            <QuickChip label="Teacher Ms. Fatima summary" onPick={handleAskSmart} />
+            <QuickChip label="Math subject overview" onPick={handleAskSmart} />
+            <QuickChip label="Class 1 summary" onPick={handleAskSmart} />
             <div className="ml-auto flex items-center gap-2">
               <button
                 onClick={clearChat}
@@ -232,23 +255,19 @@ const CopilotButton: React.FC = () => {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    askLocal(input);
-                    setInput('');
+                    handleAskSmart(input);
                   }
                 }}
-                placeholder="Ask about a student, a teacher, a class, a subject, or the overall school…"
+                placeholder="Ask about a student, a teacher, a class, a subject, or ask for suggestions…"
                 className="w-full border rounded-md py-2 pl-3 pr-10 text-sm focus:ring-royal-blue focus:border-royal-blue"
               />
               <Bot className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-royal-blue" />
             </div>
 
             <button
-              onClick={() => {
-                askLocal(input);
-                setInput('');
-              }}
+              onClick={() => handleAskSmart(input)}
               className="inline-flex items-center gap-1 bg-royal-blue text-white text-sm font-medium px-3 py-2 rounded-md hover:bg-opacity-90"
-              title="Ask locally"
+              title="Ask (smart)"
             >
               <Send className="h-4 w-4" />
               Ask

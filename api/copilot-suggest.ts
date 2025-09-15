@@ -1,12 +1,13 @@
 // api/copilot-suggest.ts
 
+// You can change the model here if you want.
 const MODEL = process.env.OPENAI_MODEL ?? 'gpt-4o-mini';
 
+// (Optional) very light CORS for safety if you ever call from another origin
 function applyCors(req: any, res: any) {
   const origin = String(req.headers.origin || '');
-  // allow your Vercel preview + prod; add your custom domain here if you add one
   const allow =
-    origin.endsWith('.vercel.app') || origin === 'https://samart-assessment.vercel.app';
+    origin.endsWith('.vercel.app') || origin.includes('samart-assessment.vercel.app');
 
   if (allow) res.setHeader('Access-Control-Allow-Origin', origin);
   res.setHeader('Vary', 'Origin');
@@ -17,35 +18,31 @@ function applyCors(req: any, res: any) {
 export default async function handler(req: any, res: any) {
   applyCors(req, res);
   if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  const apiKey = (process.env.OPENAI_API_KEY || '').trim();
+  if (!apiKey) return res.status(500).json({ error: 'OPENAI_API_KEY is missing' });
 
   try {
-    if (req.method !== 'POST') {
-      return res.status(405).json({ error: 'Method not allowed' });
-    }
-
-    const apiKey = (process.env.OPENAI_API_KEY || '').trim();
-    if (!apiKey) {
-      return res.status(500).json({ error: 'OPENAI_API_KEY is missing' });
-    }
-
     const { question, summary = {} } = req.body || {};
     if (!question || typeof question !== 'string') {
       return res.status(400).json({ error: 'Missing "question"' });
     }
 
-    // Optional: log last 4 for debugging; remove after you confirm on Vercel
-    console.log('Copilot using OPENAI_API_KEY ending with:', apiKey.slice(-4));
-
+    // >>> THIS is the prompt you asked about <<<
     const prompt = [
-      'You are a school AI assistant.',
-      'Give short, clear, practical steps for teachers or principals.',
-      'Use bullet points. Keep it simple.',
+      'ROLE: You are a school AI helper.',
+      'INSTRUCTIONS:',
+      '- Read the JSON CONTEXT.',
+      '- Answer ONLY the USER QUESTION.',
+      '- If the question asks for suggestions/advice/plan, give 5–7 short, practical bullet points.',
+      '- Keep language simple.',
       '',
-      'Context (JSON):',
+      'CONTEXT (JSON):',
       JSON.stringify(summary, null, 2),
       '',
-      'User question:',
-      question,
+      'USER QUESTION:',
+      question
     ].join('\n');
 
     const r = await fetch('https://api.openai.com/v1/responses', {
@@ -57,32 +54,38 @@ export default async function handler(req: any, res: any) {
       body: JSON.stringify({
         model: MODEL,
         input: prompt,
-        temperature: 0.4,
+        temperature: 0.2,
+        max_output_tokens: 500
       }),
     });
 
-    const j = await r.json();
+    // Read safely (avoid “Unexpected end of JSON”)
+    const ct = r.headers.get('content-type') || '';
+    const raw = await r.text();
+    const j = ct.includes('application/json') ? JSON.parse(raw || '{}') : { error: raw };
+
     if (!r.ok) {
-      // OpenAI often returns helpful error messages here
-      return res.status(r.status).json({ error: j?.error?.message || 'OpenAI error' });
+      let msg = j?.error?.message || 'OpenAI error';
+      if (/incorrect api key|invalid api key|401/i.test(msg)) {
+        msg = 'OpenAI rejected the API key (401). Check the key in Vercel Production env.';
+      } else if (r.status === 429 || /quota|rate|exceeded/i.test(msg)) {
+        msg = 'OpenAI quota/limit reached (429). Add billing or raise limits in your OpenAI project.';
+      }
+      return res.status(r.status).json({ error: msg });
     }
 
+    // Different SDKs/versions return slightly different shapes. Handle both.
     const text =
       j.output_text ||
-      (j.output && j.output[0] && j.output[0].content && j.output[0].content[0] && j.output[0].content[0].text) ||
+      (j.output && j.output[0]?.content?.[0]?.text) ||
+      (Array.isArray(j.choices) && j.choices[0]?.message?.content) ||
       'No suggestions available right now.';
 
-    return res.status(200).json({ ok: true, suggestions: text });
+    return res.status(200).json({ ok: true, suggestions: String(text) });
   } catch (err: any) {
-    console.error('copilot-suggest error:', err);
     return res.status(500).json({ error: err?.message || 'Server error' });
-    
   }
 }
-console.log(
-  'ENV=', process.env.VERCEL_ENV,
-  'OPENAI last4=', (process.env.OPENAI_API_KEY || '').trim().slice(-4)
-);
 
 
 
