@@ -1,38 +1,31 @@
 // src/components/copilot/CopilotButton.tsx
-// src/components/copilot/CopilotButton.tsx
-import React, { useMemo, useState, useContext, useRef, useEffect } from 'react';
-import { Bot, Send, Sparkles, Loader2 } from 'lucide-react';
+import React, { useState, useContext, useRef, useEffect } from 'react';
+import { Bot, Sparkles, Loader2, Send } from 'lucide-react';
 import Modal from '../ui/Modal';
 import { DataContext } from '../../context/DataContext';
 import { AuthContext } from '../../context/AuthContext';
-import { Role, Assessment, AssessmentResult, User } from '../../types';
+import { Role, Assessment, AssessmentResult } from '../../types';
 import { mockUsers } from '../../data/mockData';
-import { smartAsk, shouldAskAI } from './logic';
+import { smartAsk, shouldAskAI, isGreeting } from './logic';
 
-/* ----------------------- helpers (same as before) ----------------------- */
-const getGradeForUser = (u: User) => {
-  const g = (u as any)?.grade;
-  if (g != null && g !== '') return String(g);
-  const m = String(u.classId || '').match(/\d+/);
-  return m ? m[0] : '';
-};
+/* ---------------- small helpers ---------------- */
 const lines = (...ls: (string | undefined | false)[]) => ls.filter(Boolean).join('\n');
 type Msg = { from: 'user' | 'assistant'; text: string };
-const toKey = (s: string) => s.toLowerCase().trim();
 const pct = (n: number) => `${Math.max(0, Math.min(100, Math.round(n)))}%`;
 const avg = (nums: number[]) => (nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : 0);
 
-/* ------------------- small context string for the LLM -------------------- */
+/* ------------ make compact context string for AI ------------ */
 function makeSchoolContext(assessments: Assessment[], results: AssessmentResult[]) {
-  const overall = pct(avg(results.map(r => r.score ?? 0)));
+  const overall = pct(avg(results.map(r => Number((r as any).score ?? 0))));
   const latest = [...assessments]
-    .sort((a, b) => b.assessmentId.localeCompare(a.assessmentId))
+    .sort((a, b) => String(b.assessmentId).localeCompare(String(a.assessmentId)))
     .slice(0, 3)
     .map(a => `${a.title} (${a.subject || 'Subject'})`)
     .join('; ');
   const classes = Array.from(
     new Set(mockUsers.filter(u => u.role === Role.STUDENT).map(u => u.classId || ''))
   ).filter(Boolean);
+
   return [
     `School average: ${overall}`,
     `Results recorded: ${results.length}`,
@@ -43,62 +36,138 @@ function makeSchoolContext(assessments: Assessment[], results: AssessmentResult[
     .join(' | ');
 }
 
-/* ---------------------- local data answer function ---------------------- */
-function answerFor(
+/* ----------------- read student id from result safely ----------------- */
+function getResultStudentId(r: AssessmentResult | any): string {
+  return String(
+    r?.userId ??
+      r?.studentId ??
+      r?.studentID ??
+      r?.student?.id ??
+      r?.user?.id ??
+      ''
+  );
+}
+
+/* ---------------------- data answerer (local) ---------------------- */
+function answerFromData(
   q: string,
   _role: Role,
   assessments: Assessment[],
   results: AssessmentResult[]
 ): string {
-  const ql = q.toLowerCase();
+  const question = q.toLowerCase();
 
-  // Map assessmentId -> assessment (to read subject/title)
-  const aById = new Map(assessments.map(a => [a.assessmentId, a]));
+  // users
+  const students = mockUsers.filter(u => u.role === Role.STUDENT);
 
-  // Build subject averages
-  const subjectSum = new Map<string, { sum: number; count: number }>();
-  for (const r of results) {
-    const a = aById.get(r.assessmentId as any);
-    const subject = (a?.subject || 'General').toString();
-    const s = subjectSum.get(subject) || { sum: 0, count: 0 };
-    s.sum += Number(r.score ?? 0);
-    s.count += 1;
-    subjectSum.set(subject, s);
-  }
+  // quick student match by name
+  const student = students.find(s => question.includes(String(s.name).toLowerCase()));
 
-  const overall = avg(results.map(r => Number(r.score ?? 0)));
+  // Map assessmentId -> assessment for subject lookup
+  const aById = new Map<string, Assessment>(
+    assessments.map(a => [String(a.assessmentId), a])
+  );
 
-  const subjectAvg = [...subjectSum.entries()].map(([subj, { sum, count }]) => ({
-    subj,
-    avg: count ? sum / count : 0,
-    count,
-  }));
+  // student details
+  if (student) {
+    const studentId = String((student as any).userId ?? (student as any).id ?? '');
+    const sResults = results.filter(r => getResultStudentId(r) === studentId);
+    const overall = avg(sResults.map(r => Number((r as any).score ?? 0)));
 
-  // If a subject word is in the question, return that subject summary
-  const found = subjectAvg.find(s => ql.includes(s.subj.toLowerCase()));
-  if (found) {
+    // subject stats
+    const bySubj = new Map<string, { sum: number; count: number }>();
+    for (const r of sResults) {
+      const a = aById.get(String((r as any).assessmentId));
+      const subj = (a?.subject || 'General').toString();
+      const s = bySubj.get(subj) || { sum: 0, count: 0 };
+      s.sum += Number((r as any).score ?? 0);
+      s.count += 1;
+      bySubj.set(subj, s);
+    }
+
+    const arr = [...bySubj.entries()].map(([name, v]) => ({
+      name,
+      avg: v.count ? v.sum / v.count : 0,
+      count: v.count,
+    }));
+    const best = arr.slice().sort((a, b) => b.avg - a.avg)[0];
+    const weak = arr.slice().sort((a, b) => a.avg - b.avg)[0];
+
     return lines(
-      `Subject: ${found.subj}`,
-      `Average: ${pct(found.avg)}`,
-      `Assessments graded: ${found.count}`,
-      `Tip: focus weak students with short practice sets and track re-tests next week.`
+      `Student: ${student.name}`,
+      `Class: ${student.classId || '—'}`,
+      `Overall: ${pct(overall)}`,
+      best ? `Best: ${best.name} (${pct(best.avg)})` : '',
+      weak && weak !== best ? `Needs help: ${weak.name} (${pct(weak.avg)})` : '',
+      `Tip: short daily practice + 1 weekly recap usually lifts scores in 2–4 weeks.`
     );
   }
 
-  // Default: overall + best/weak subjects
-  const sorted = [...subjectAvg].sort((a, b) => b.avg - a.avg);
+  // subject overview (by subject text)
+  const subjects = Array.from(new Set(assessments.map(a => (a.subject || 'General').toString())));
+  const hitSubj = subjects.find(s => question.includes(s.toLowerCase()));
+  if (hitSubj) {
+    let sum = 0,
+      count = 0;
+    for (const r of results) {
+      const a = aById.get(String((r as any).assessmentId));
+      if (String(a?.subject || '').toLowerCase() === hitSubj.toLowerCase()) {
+        sum += Number((r as any).score ?? 0);
+        count += 1;
+      }
+    }
+    return lines(
+      `Subject: ${hitSubj}`,
+      `Average: ${pct(count ? sum / count : 0)}`,
+      `Assessments graded: ${count}`,
+      `Ask with "how/plan" for AI strategies.`
+    );
+  }
+
+  // class/grade summary
+  const classMatch = question.match(/class\s*(\d+)|grade\s*(\d+)/i);
+  if (classMatch) {
+    const classId = classMatch[1] || classMatch[2];
+    const inClass = students.filter(s => String(s.classId).includes(String(classId)));
+    const ids = new Set(inClass.map(s => String((s as any).userId ?? (s as any).id)));
+    const rows = results.filter(r => ids.has(getResultStudentId(r)));
+    const overall = avg(rows.map(r => Number((r as any).score ?? 0)));
+    return lines(
+      `Class ${classId} summary`,
+      `Students: ${inClass.length}`,
+      `Overall average: ${pct(overall)}`,
+      `Ask for suggestions if you want a plan to raise this class.`
+    );
+  }
+
+  // default: schoolwide overview with best/weak subject
+  const subjectSum = new Map<string, { sum: number; count: number }>();
+  for (const r of results) {
+    const a = aById.get(String((r as any).assessmentId));
+    const subj = (a?.subject || 'General').toString();
+    const s = subjectSum.get(subj) || { sum: 0, count: 0 };
+    s.sum += Number((r as any).score ?? 0);
+    s.count += 1;
+    subjectSum.set(subj, s);
+  }
+  const arr = [...subjectSum.entries()].map(([subj, v]) => ({
+    subj,
+    avg: v.count ? v.sum / v.count : 0,
+  }));
+  const sorted = arr.sort((a, b) => b.avg - a.avg);
   const best = sorted[0];
   const weak = sorted[sorted.length - 1];
+  const overall = avg(results.map(r => Number((r as any).score ?? 0)));
 
   return lines(
     `Overall average: ${pct(overall)}`,
     best ? `Best subject: ${best.subj} (${pct(best.avg)})` : '',
     weak && weak !== best ? `Needs attention: ${weak.subj} (${pct(weak.avg)})` : '',
-    `Use "Get AI suggestions" for an action plan.`
+    `Ask for suggestions if you want a step-by-step plan.`
   );
 }
 
-/* ---------------------------- QuickChip ---------------------------------- */
+/* --------------------------- QuickChip --------------------------- */
 const QuickChip: React.FC<{ label: string; onPick: (q: string) => void }> = ({ label, onPick }) => (
   <button
     onClick={() => onPick(label)}
@@ -109,11 +178,10 @@ const QuickChip: React.FC<{ label: string; onPick: (q: string) => void }> = ({ l
   </button>
 );
 
-/* ---------------------------- CopilotButton ------------------------------ */
+/* ------------------------ CopilotButton ------------------------ */
 const CopilotButton: React.FC = () => {
   const auth = useContext(AuthContext);
   const data = useContext(DataContext);
-
   if (!auth?.user || auth.user.role !== Role.PRINCIPAL) return null;
 
   const assessments = data?.assessments ?? [];
@@ -121,7 +189,7 @@ const CopilotButton: React.FC = () => {
 
   const [open, setOpen] = useState(false);
   const [msgs, setMsgs] = useState<Msg[]>([
-    { from: 'assistant', text: 'Welcome — ask anything about students, teachers, classes, or subjects.' },
+    { from: 'assistant', text: 'Welcome — ask anything. Try: "How can I improve Grade 5 science?" or "Zayed details".' },
   ]);
   const [input, setInput] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
@@ -129,31 +197,29 @@ const CopilotButton: React.FC = () => {
 
   useEffect(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }), [msgs, open]);
 
-  // Small helper to build the summary we pass to AI
   const buildSummary = () => ({
     overview: makeSchoolContext(assessments, results),
     counts: { assessments: assessments.length, results: results.length },
   });
 
-  // SMART Ask: routes to AI for advice-type questions; otherwise uses local data
-  const handleAskSmart = async (q: string) => {
-    const question = q.trim();
-    if (!question) return;
+  // ONE BUTTON: decide AI vs data automatically
+  const handleSend = async (raw: string) => {
+    const q = raw.trim();
+    if (!q) return;
 
-    // show user message
-    setMsgs(p => [...p, { from: 'user', text: question }]);
+    setMsgs(p => [...p, { from: 'user', text: q }]);
 
     const summary = buildSummary();
-    const willUseAI = shouldAskAI(question);
+    const willUseAI = isGreeting(q) || shouldAskAI(q);
 
     try {
       if (willUseAI) setAiBusy(true);
 
-      const res = await smartAsk(question, summary, {
-        dataAnswerer: (qq) => answerFor(qq, auth.user!.role, assessments, results),
+      const res = await smartAsk(q, summary, {
+        dataAnswerer: (qq) => answerFromData(qq, auth.user!.role, assessments, results),
       });
 
-      const botText = res.type === 'ai' ? `Suggestions:\n${res.text}` : res.text;
+      const botText = res.type === 'ai' ? res.text : res.text;
       setMsgs(p => [...p, { from: 'assistant', text: botText }]);
     } catch (e: any) {
       setMsgs(p => [
@@ -166,30 +232,15 @@ const CopilotButton: React.FC = () => {
     }
   };
 
-  // Always-AI button
-  const askSuggestions = async () => {
-    const summary = buildSummary();
-    try {
-      setAiBusy(true);
-      const res = await smartAsk('Give an action plan based on this summary.', summary, { forceAI: true });
-      setMsgs(p => [...p, { from: 'assistant', text: `Suggestions:\n${res.text}` }]);
-    } catch (e: any) {
-      setMsgs(p => [
-        ...p,
-        { from: 'assistant', text: `Could not fetch AI suggestions. ${String(e?.message || e)}` },
-      ]);
-    } finally {
-      setAiBusy(false);
-    }
-  };
-
   const clearChat = () => {
-    setMsgs([{ from: 'assistant', text: 'Welcome — ask anything about students, teachers, classes, or subjects.' }]);
+    setMsgs([
+      { from: 'assistant', text: 'Welcome — ask anything. Try: "How can I improve Grade 5 science?" or "Zayed details".' },
+    ]);
   };
 
   return (
     <>
-      {/* Header button */}
+      {/* Launcher button */}
       <button
         onClick={() => setOpen(true)}
         className="inline-flex items-center gap-2 h-9 px-3 rounded-md border border-gray-300 bg-white text-royal-blue
@@ -204,14 +255,13 @@ const CopilotButton: React.FC = () => {
 
       <Modal isOpen={open} onClose={() => setOpen(false)} title="Smart Assessment Copilot">
         <div className="flex flex-col gap-3">
-          {/* Suggestions row */}
+          {/* Quick chips (optional) */}
           <div className="flex flex-wrap items-center gap-2">
-            <QuickChip label="School overall performance" onPick={handleAskSmart} />
-            <QuickChip label="How is Zayed Al Maktoum performing?" onPick={handleAskSmart} />
-            <QuickChip label="Teacher Ms. Fatima summary" onPick={handleAskSmart} />
-            <QuickChip label="Math subject overview" onPick={handleAskSmart} />
-            <QuickChip label="Class 1 summary" onPick={handleAskSmart} />
-            <div className="ml-auto flex items-center gap-2">
+            <QuickChip label="School overall performance" onPick={handleSend} />
+            <QuickChip label="How can I improve Grade 5 science?" onPick={handleSend} />
+            <QuickChip label="Zayed Al Maktoum details" onPick={handleSend} />
+            <QuickChip label="Write 5 science quiz questions" onPick={handleSend} />
+            <div className="ml-auto">
               <button
                 onClick={clearChat}
                 className="text-xs px-2 py-1 rounded border bg-white hover:bg-gray-50"
@@ -239,14 +289,14 @@ const CopilotButton: React.FC = () => {
               <div className="text-left">
                 <div className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm bg-white border">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Getting AI suggestions…
+                  Thinking…
                 </div>
               </div>
             )}
             <div ref={endRef} />
           </div>
 
-          {/* Input + buttons */}
+          {/* Input + ONE “Ask” button (AI look) */}
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
               <input
@@ -255,32 +305,25 @@ const CopilotButton: React.FC = () => {
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    handleAskSmart(input);
+                    handleSend(input);
                   }
                 }}
-                placeholder="Ask about a student, a teacher, a class, a subject, or ask for suggestions…"
-                className="w-full border rounded-md py-2 pl-3 pr-10 text-sm focus:ring-royal-blue focus:border-royal-blue"
+                placeholder="Ask for data or ideas… (e.g., “Zayed details”, “Write 5 algebra questions”, “How to boost science?”)"
+                className="w-full border rounded-md py-2 pl-3 pr-12 text-sm focus:ring-royal-blue focus:border-royal-blue"
               />
-              <Bot className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-royal-blue" />
+              <Bot className="absolute right-9 top-1/2 -translate-y-1/2 h-4 w-4 text-royal-blue" />
             </div>
 
             <button
-              onClick={() => handleAskSmart(input)}
-              className="inline-flex items-center gap-1 bg-royal-blue text-white text-sm font-medium px-3 py-2 rounded-md hover:bg-opacity-90"
-              title="Ask (smart)"
+              onClick={() => handleSend(input)}
+              disabled={aiBusy && !!input.trim()}
+              className="inline-flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-md
+                         bg-gradient-to-r from-royal-blue to-blue-600 text-white shadow
+                         hover:opacity-90 disabled:opacity-60"
+              title="Ask"
             >
-              <Send className="h-4 w-4" />
+              {aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               Ask
-            </button>
-
-            <button
-              disabled={aiBusy}
-              onClick={askSuggestions}
-              className="inline-flex items-center gap-1 border px-3 py-2 rounded-md text-sm hover:bg-gray-50 disabled:opacity-60"
-              title="Get AI suggestions to improve performance"
-            >
-              {aiBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              Get AI suggestions
             </button>
           </div>
         </div>
@@ -290,6 +333,8 @@ const CopilotButton: React.FC = () => {
 };
 
 export default CopilotButton;
+
+
 
 
 
